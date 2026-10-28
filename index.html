@@ -4,29 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0c0c0c">
-    <title>convoyOS v0.0.1 — Offline-First Local & P2P File Sharing</title>
+    <title>convoyOS — Fast Local & P2P File Sharing</title>
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
     <link rel="alternate icon" type="image/png" href="./assets/favicon.png">
     <link rel="manifest" href="./manifest.json">
     <link rel="stylesheet" href="./css/variables.css">
     <link rel="stylesheet" href="./css/reset.css">
     <link rel="stylesheet" href="./css/main.css">
+    <link rel="stylesheet" href="./css/components.css">
 </head>
 <body>
 
-    <!-- OFFLINE SVG ICON SPRITE SHEET (Zero external icon requests) -->
+    <!-- OFFLINE SVG ICON SPRITE SHEET -->
     <svg xmlns="http://www.w3.org/2000/svg" class="hidden" aria-hidden="true">
         <symbol id="icon-bolt" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
         <symbol id="icon-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
         <symbol id="icon-cloud-up" viewBox="0 0 24 24"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m16 16-4-4-4 4"/></symbol>
+        <symbol id="icon-cloud-down" viewBox="0 0 24 24"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m8 17 4 4 4-4"/></symbol>
         <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
         <symbol id="icon-clipboard" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol>
         <symbol id="icon-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
         <symbol id="icon-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
         <symbol id="icon-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
         <symbol id="icon-close" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
-        <symbol id="icon-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
-        <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
         <symbol id="icon-wifi" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></symbol>
         <symbol id="icon-rotate" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
         <symbol id="icon-laptop" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="2" y1="20" x2="22" y2="20"/></symbol>
@@ -35,11 +35,10 @@
         <symbol id="icon-tablet" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></symbol>
         <symbol id="icon-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
         <symbol id="icon-qrcode" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></symbol>
-        <symbol id="icon-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
-        <symbol id="icon-shake" viewBox="0 0 24 24"><path d="M2 12h2l2-5 4 10 4-10 2 5h6"/></symbol>
+        <symbol id="icon-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
+        <symbol id="icon-camera" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></symbol>
         <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
         <symbol id="icon-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
-        <symbol id="icon-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></symbol>
         <symbol id="icon-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></symbol>
     </svg>
 
@@ -52,25 +51,22 @@
                 </div>
                 <div>
                     <h1 class="brand-title">
-                        convoyOS <span class="version-badge">v0.0.1 Offline P2P</span>
+                        convoyOS <span class="version-badge">v0.0.1</span>
                     </h1>
-                    <p class="brand-subtitle">Local Mesh • Resumable Chunks • Zero Server</p>
+                    <p class="brand-subtitle">Direct P2P File Sharing</p>
                 </div>
             </div>
 
             <div class="header-controls">
                 <div class="node-status-pill" id="networkStatusPill">
                     <span class="status-dot" id="networkStatusDot"></span>
-                    <span>Node: <strong id="headerNodeName" style="color:#fff">M3 Max Studio</strong> (<span id="networkModeLabel">Mesh Ready</span>)</span>
+                    <span><strong id="headerNodeName" style="color:#fff">Node</strong> • <span id="networkModeLabel">Connecting...</span></span>
                 </div>
-                <button class="icon-btn" id="shakeHeaderBtn" title="Toggle Shake-to-Send Handshake" onclick="window.convoyApp.toggleShakeMode()">
-                    <svg class="icon"><use href="#icon-shake"></use></svg>
-                </button>
                 <button class="icon-btn" title="Node Settings" onclick="window.convoyApp.openSettingsModal()">
                     <svg class="icon"><use href="#icon-gear"></use></svg>
                 </button>
                 <div class="avatar-badge" id="nodeInitialsBadge" onclick="window.convoyApp.openSettingsModal()" title="Edit Node Profile">
-                    CS
+                    CV
                 </div>
             </div>
         </div>
@@ -79,10 +75,9 @@
     <!-- MAIN 1400PX RESPONSIVE CONTENT GRID -->
     <main class="main-grid">
 
-        <!-- LEFT COLUMN (7 Cols): File/Folder Drop Zone + Resumable Queue + Quick Stats -->
+        <!-- LEFT COLUMN (7 Cols): Clean Drop Zone + Action Pills + Resumable Queue -->
         <section class="left-col">
 
-            <!-- Universal Drag & Drop Zone -->
             <div id="dropZone" class="glass-card dropzone-card">
                 <div class="ambient-glow top-right"></div>
                 <div class="ambient-glow bottom-left"></div>
@@ -91,21 +86,16 @@
                 <input type="file" id="fileInput" multiple class="hidden-file-input">
                 <input type="file" id="folderInput" webkitdirectory directory multiple class="hidden-file-input">
 
-                <!-- Empty State Prompt -->
+                <!-- Clean Empty State (Only Icon, Title, and 3 Action Pills) -->
                 <div id="dropZonePrompt" class="dropzone-prompt">
                     <div class="upload-icon-box" onclick="document.getElementById('fileInput').click()">
                         <svg class="icon"><use href="#icon-cloud-up"></use></svg>
                     </div>
-                    <div>
-                        <h2 class="dropzone-title" onclick="document.getElementById('fileInput').click()">
-                            Drag & Drop files or folders, or <span class="text-link">browse</span>
-                        </h2>
-                        <p class="dropzone-desc">
-                            Streams any file size in 64 KB backpressure-controlled chunks directly to disk with IndexedDB auto-resume.
-                        </p>
-                    </div>
 
-                    <!-- Quick Input Buttons (Files, Folders, Clipboard Paste) -->
+                    <h2 class="dropzone-title" onclick="document.getElementById('fileInput').click()">
+                        Drag & Drop files or folders, or <span class="text-link">browse</span>
+                    </h2>
+
                     <div class="quick-input-actions">
                         <button type="button" class="pill-action-btn" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
                             <svg class="icon"><use href="#icon-plus"></use></svg> Select Files
@@ -117,21 +107,15 @@
                             <svg class="icon"><use href="#icon-clipboard"></use></svg> Paste Clipboard (Ctrl+V)
                         </button>
                     </div>
-
-                    <div class="tech-badges">
-                        <span class="mono-badge">DTLS 1.3 Encrypted</span>
-                        <span class="mono-badge">64KB Chunk Ledger</span>
-                        <span class="mono-badge">0% Cloud Storage</span>
-                    </div>
                 </div>
 
-                <!-- Staged Files Queue State -->
+                <!-- Staged Files Queue State (Shown when files are selected) -->
                 <div id="stagedFilesContainer" class="staged-container hidden" onclick="event.stopPropagation()">
                     <div class="staged-header">
                         <div class="staged-title-group">
                             <span class="ping-dot"></span>
-                            <h3 class="staged-title">Staged Queue (<span id="stagedCount">0</span>)</h3>
-                            <span id="stagedTotalBytes" class="staged-total-size">0.00 MB</span>
+                            <h3 class="staged-title">Staged Files (<span id="stagedCount">0</span>)</h3>
+                            <span id="stagedTotalBytes" class="staged-total-size">0 B</span>
                         </div>
                         <div class="staged-actions">
                             <button type="button" class="btn-danger-soft" onclick="window.convoyDragDrop.clearStagedFiles()">
@@ -147,62 +131,29 @@
                 </div>
             </div>
 
-            <!-- Interrupted / Resumable Transfers Ledger (IndexedDB) -->
+            <!-- Interrupted / Resumable Transfers Ledger (Only visible if a transfer was paused/interrupted) -->
             <div id="resumeLedgerCard" class="glass-card resume-ledger-card hidden">
                 <div class="ledger-header">
-                    <span>Resumable Transfers in Chunk Ledger</span>
-                    <button type="button" class="text-action-btn" onclick="window.convoyStorage.clearAllCheckpoints()">Clear History</button>
+                    <span>Paused / Interrupted Transfers</span>
+                    <button type="button" class="text-action-btn" onclick="window.convoyStorage.clearAllCheckpoints()">Clear</button>
                 </div>
                 <div id="resumeLedgerList" class="ledger-list"></div>
             </div>
 
-            <!-- 3 Quick Stats & Helper Cards -->
-            <div class="stats-grid">
-                <div class="glass-card stat-card">
-                    <div class="stat-icon blue">
-                        <svg class="icon"><use href="#icon-gauge"></use></svg>
-                    </div>
-                    <div>
-                        <p class="stat-label">Chunk Engine</p>
-                        <h4 class="stat-value">64 KB Slice <span class="stat-tag">Zero-RAM</span></h4>
-                    </div>
-                </div>
-
-                <div class="glass-card stat-card">
-                    <div class="stat-icon purple">
-                        <svg class="icon"><use href="#icon-shield"></use></svg>
-                    </div>
-                    <div>
-                        <p class="stat-label">Security Protocol</p>
-                        <h4 class="stat-value">DTLS 1.3 / AES-GCM</h4>
-                    </div>
-                </div>
-
-                <div class="glass-card stat-card">
-                    <div class="stat-icon emerald">
-                        <svg class="icon"><use href="#icon-wifi"></use></svg>
-                    </div>
-                    <div>
-                        <p class="stat-label">Active Mesh Room</p>
-                        <h4 class="stat-value" id="subnetStatValue">LAN Subnet #48A</h4>
-                    </div>
-                </div>
-            </div>
-
         </section>
 
-        <!-- RIGHT COLUMN (5 Cols): Unified Discovery, P2P Share Link/QR & Offline Hub -->
+        <!-- RIGHT COLUMN (5 Cols): Clean 3-Tab Hub (| Nearby | Pair | Global Link |) -->
         <section class="right-col">
             <div class="glass-card hub-card">
 
-                <!-- Top Radar Header -->
+                <!-- Top Header -->
                 <div class="hub-top-bar">
                     <div class="radar-title-wrap">
                         <div class="radar-pulse">
                             <span class="radar-ring"></span>
                             <span class="radar-core"></span>
                         </div>
-                        <h2 class="hub-heading" id="hubPanelTitle">Nearby & Paired Nodes</h2>
+                        <h2 class="hub-heading" id="hubPanelTitle">Nearby Devices</h2>
                     </div>
                     <div class="hub-header-actions">
                         <button type="button" class="text-action-btn" onclick="window.convoyDiscovery.refreshPeers()">
@@ -211,90 +162,62 @@
                     </div>
                 </div>
 
-                <!-- 3-Way Mode Switcher -->
+                <!-- 3-Tab Switcher: | Nearby | Pair | Global Link | -->
                 <div class="hub-tabs">
                     <button type="button" class="hub-tab-btn active" id="tabBtnNearby" onclick="window.convoyApp.switchHubTab('nearby')">
-                        <svg class="icon"><use href="#icon-wifi"></use></svg> Nearby & Paired
+                        <svg class="icon"><use href="#icon-wifi"></use></svg> Nearby
                     </button>
-                    <button type="button" class="hub-tab-btn" id="tabBtnShare" onclick="window.convoyApp.switchHubTab('share')">
-                        <svg class="icon"><use href="#icon-link"></use></svg> Link & QR Share
+                    <button type="button" class="hub-tab-btn" id="tabBtnPair" onclick="window.convoyApp.switchHubTab('pair')">
+                        <svg class="icon"><use href="#icon-qrcode"></use></svg> Pair
                     </button>
-                    <button type="button" class="hub-tab-btn" id="tabBtnOffline" onclick="window.convoyApp.switchHubTab('offline')">
-                        <svg class="icon"><use href="#icon-qrcode"></use></svg> Offline LAN / Host
+                    <button type="button" class="hub-tab-btn" id="tabBtnGlobal" onclick="window.convoyApp.switchHubTab('global')">
+                        <svg class="icon"><use href="#icon-globe"></use></svg> Global Link
                     </button>
                 </div>
 
-                <!-- TAB 1: Nearby Mesh & Paired Devices -->
+                <!-- TAB 1: NEARBY (Only Real, Currently Active Devices) -->
                 <div id="tabPanelNearby">
                     <div id="deviceList" class="device-list"></div>
-
-                    <div class="nearby-bottom-actions">
-                        <button type="button" class="secondary-action-btn" onclick="window.convoyDiscovery.openPairModal()">
-                            <svg class="icon"><use href="#icon-qrcode"></use></svg> Pair Device (PIN / QR)
-                        </button>
-                        <button type="button" id="shakeActionBtn" class="secondary-action-btn" onclick="window.convoyApp.triggerInstantShake()">
-                            <svg class="icon"><use href="#icon-shake"></use></svg> Shake-to-Send
-                        </button>
-                    </div>
-
-                    <p class="hub-footer-tip">Select files on the left, then click any node above to start a P2P stream.</p>
                 </div>
 
-                <!-- TAB 2: Share Anywhere via P2P Link, PIN Code & QR (ToffeeShare Mode) -->
-                <div id="tabPanelShare" class="tab-panel-content hidden">
+                <!-- TAB 2: PAIR (Scannable QR + 6-Digit PIN + Mobile Camera Scanner + Offline Handshake) -->
+                <div id="tabPanelPair" class="tab-panel-content hidden">
                     <div class="qr-display-box">
-                        <div class="qr-svg-frame" id="shareQrContainer"></div>
-                        <p style="font-size:12px; color:var(--text-secondary)">Direct P2P Download Code (Valid while tab is open)</p>
-                        <div class="pin-code-display" id="sharePinDisplay">CV-8492</div>
+                        <div class="qr-svg-frame" id="pairQrContainer" title="Scan with phone camera"></div>
+                        <p class="pair-helper-text">Scan QR or enter this 6-digit PIN on your other device:</p>
+                        <div class="pin-code-display" id="pairPinDisplay">------</div>
 
+                        <!-- Enter Peer's 6-Digit PIN -->
                         <div class="copy-input-group">
-                            <input type="text" id="shareUrlInput" class="text-input" readonly value="">
-                            <button type="button" class="btn-primary-sm" onclick="window.convoyTransfer.copyShareLink()">
-                                <svg class="icon"><use href="#icon-copy"></use></svg> Copy
+                            <input type="text" id="pairPinInput" class="text-input" maxlength="7" placeholder="Enter 6-digit PIN (e.g. 482910)">
+                            <button type="button" class="btn-primary-sm" onclick="window.convoyDiscovery.connectWithPin()">
+                                Pair
                             </button>
                         </div>
-                    </div>
 
-                    <div class="qr-display-box" style="padding:14px">
-                        <p style="font-size:12px; font-weight:600; color:var(--text-white)">Have a 6-Digit Share Code from another device?</p>
-                        <div class="copy-input-group">
-                            <input type="text" id="joinCodeInput" class="text-input" placeholder="Enter code (e.g. CV-8492)">
-                            <button type="button" class="btn-primary-sm" onclick="window.convoyTransfer.connectByShareCode()">
-                                Connect
+                        <!-- Mobile Camera Scanner & Offline 2-Way Handshake Actions -->
+                        <div class="pair-action-row">
+                            <button type="button" class="secondary-action-btn" onclick="window.convoyDiscovery.startCameraScanner()">
+                                <svg class="icon"><use href="#icon-camera"></use></svg> Scan QR with Camera
+                            </button>
+                            <button type="button" class="secondary-action-btn" onclick="window.convoyDiscovery.openOfflineHandshakeModal()">
+                                <svg class="icon"><use href="#icon-wifi"></use></svg> 0% Internet LAN Mode
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <!-- TAB 3: 100% Offline LAN Handshake & Zero-Install Hotspot Host -->
-                <div id="tabPanelOffline" class="tab-panel-content hidden">
+                <!-- TAB 3: GLOBAL LINK (ToffeeShare Cross-Continent Mode - Saved for Final Step) -->
+                <div id="tabPanelGlobal" class="tab-panel-content hidden">
                     <div class="qr-display-box">
-                        <div class="qr-svg-frame" id="offlineQrContainer"></div>
-                        <h4 style="font-size:13px; font-weight:600; color:var(--text-white)">Serverless Offline WebRTC QR Handshake</h4>
-                        <p style="font-size:11px; color:var(--text-secondary); max-width:320px">
-                            No internet on your Wi-Fi router? Scan this Offer QR on the second device to lock in a direct LAN DataChannel with 0 servers.
-                        </p>
-                        <div style="display:flex; gap:8px; width:100%">
-                            <button type="button" class="secondary-action-btn" style="flex:1" onclick="window.convoyDiscovery.generateOfflineOfferQR()">
-                                1. New Offer QR
-                            </button>
-                            <button type="button" class="secondary-action-btn" style="flex:1" onclick="window.convoyDiscovery.promptOfflineTokenExchange()">
-                                2. Paste Answer Token
-                            </button>
+                        <div class="upload-icon-box" style="width:56px; height:56px; font-size:22px">
+                            <svg class="icon"><use href="#icon-globe"></use></svg>
                         </div>
-                    </div>
-
-                    <div class="qr-display-box" style="padding:14px; text-align:left; align-items:flex-start">
-                        <div style="display:flex; align-items:center; justify-content:space-between; width:100%">
-                            <span style="font-size:12px; font-weight:600; color:#34d399">Zero-Install Hotspot Host</span>
-                            <span class="mono-badge" id="hotspotPortBadge">Port :53317</span>
-                        </div>
-                        <p style="font-size:11px; color:var(--text-secondary)">
-                            When a peer has no internet and no app installed, share your phone/laptop Wi-Fi Hotspot QR so they can open convoyOS directly from your local node.
+                        <h4 style="font-size:14px; font-weight:600; color:#fff">Global Direct Link (ToffeeShare Mode)</h4>
+                        <p style="font-size:12px; color:var(--text-secondary); max-width:290px">
+                            Share staged files across continents via a direct P2P download link and QR code.
                         </p>
-                        <button type="button" class="secondary-action-btn" style="width:100%" onclick="window.convoyDiscovery.showHotspotOnboardingQR()">
-                            <svg class="icon"><use href="#icon-wifi"></use></svg> Generate Wi-Fi Hotspot QR
-                        </button>
+                        <span class="version-badge" style="margin-top:4px">Coming in Final Step</span>
                     </div>
                 </div>
 
@@ -303,13 +226,13 @@
 
     </main>
 
-    <!-- TRANSFER PROGRESS & RESUMABLE MODAL -->
+    <!-- MODAL 1: ACTIVE TRANSFER PROGRESS -->
     <div id="transferModal" class="modal-backdrop hidden">
         <div class="glass-card modal-card">
             <div class="modal-header">
                 <div class="staged-title-group">
-                    <span class="ping-dot" id="transferModalDot"></span>
-                    <h3 id="transferModalTitle" class="staged-title">Streaming to Peer...</h3>
+                    <span class="ping-dot"></span>
+                    <h3 id="transferModalTitle" class="staged-title">Transferring...</h3>
                 </div>
                 <button type="button" class="icon-btn" style="width:28px; height:28px" onclick="window.convoyTransfer.closeTransferModal()">
                     <svg class="icon"><use href="#icon-close"></use></svg>
@@ -320,21 +243,21 @@
                 <div class="ring-visual">
                     <div class="ring-outer"></div>
                     <div class="ring-inner"></div>
-                    <div class="ring-center-icon" id="transferIconBox">
+                    <div class="ring-center-icon">
                         <svg class="icon"><use id="transferStatusIconUse" href="#icon-cloud-up"></use></svg>
                     </div>
                 </div>
 
                 <div style="text-align:center">
-                    <h4 id="transferFilename" style="font-size:14px; font-weight:600; color:#fff; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">archive.zip</h4>
-                    <p id="transferSpeed" style="font-size:12px; color:#60a5fa; font-family:var(--font-mono); margin-top:2px">Initializing 64 KB chunks...</p>
+                    <h4 id="transferFilename" class="transfer-filename">file.zip</h4>
+                    <p id="transferSpeed" class="transfer-speed">Preparing WebRTC DataChannel...</p>
                 </div>
 
                 <div class="progress-wrap">
                     <div class="progress-meta">
                         <span id="transferPercent">0%</span>
-                        <span id="transferChunkCounter">Chunk 0 / 0</span>
-                        <span id="transferSize">0 MB / 0 MB</span>
+                        <span id="transferChunkCounter">0 / 0 Chunks</span>
+                        <span id="transferSize">0 B / 0 B</span>
                     </div>
                     <div class="progress-track">
                         <div id="transferProgressBar" class="progress-fill"></div>
@@ -344,7 +267,7 @@
 
             <div class="modal-actions">
                 <button type="button" id="pauseResumeBtn" class="btn-modal secondary" onclick="window.convoyTransfer.togglePauseTransfer()">
-                    Pause (Save Checkpoint)
+                    Pause
                 </button>
                 <button type="button" class="btn-modal secondary" onclick="window.convoyTransfer.cancelTransfer()">
                     Cancel
@@ -356,80 +279,131 @@
         </div>
     </div>
 
-    <!-- PAIR DEVICE MODAL (6-Digit PIN & QR) -->
-    <div id="pairModal" class="modal-backdrop hidden">
+    <!-- MODAL 2: INCOMING FILE ACCEPT / DECLINE PROMPT -->
+    <div id="incomingModal" class="modal-backdrop hidden">
         <div class="glass-card modal-card">
             <div class="modal-header">
-                <h3 class="staged-title">Pair Persistent Device</h3>
-                <button type="button" class="icon-btn" style="width:28px; height:28px" onclick="window.convoyDiscovery.closePairModal()">
+                <div class="staged-title-group">
+                    <span class="ping-dot"></span>
+                    <h3 class="staged-title">Incoming File Transfer</h3>
+                </div>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; text-align:center; gap:12px; padding:8px 0">
+                <div class="upload-icon-box" style="width:60px; height:60px; font-size:24px">
+                    <svg class="icon"><use href="#icon-cloud-down"></use></svg>
+                </div>
+                <p id="incomingSenderName" style="font-size:13px; font-weight:600; color:#fff">Peer wants to send:</p>
+                <div id="incomingFileSummary" class="mono-badge" style="padding:8px 14px; font-size:12px; color:#60a5fa">1 file (0 MB)</div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-modal secondary" onclick="window.convoyTransfer.declineIncomingTransfer()">
+                    Decline
+                </button>
+                <button type="button" class="btn-modal primary" onclick="window.convoyTransfer.acceptIncomingTransfer()">
+                    Accept & Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 3: MOBILE CAMERA QR SCANNER -->
+    <div id="cameraModal" class="modal-backdrop hidden">
+        <div class="glass-card modal-card">
+            <div class="modal-header">
+                <h3 class="staged-title">Scan Peer QR Code</h3>
+                <button type="button" class="icon-btn" style="width:28px; height:28px" onclick="window.convoyDiscovery.stopCameraScanner()">
                     <svg class="icon"><use href="#icon-close"></use></svg>
                 </button>
             </div>
-            <div class="qr-display-box">
-                <div class="qr-svg-frame" id="pairModalQr"></div>
-                <p style="font-size:12px; color:var(--text-secondary)">Scan QR or enter this 6-digit PIN on your second device:</p>
-                <div class="pin-code-display" id="pairModalPin">492-810</div>
+            <div class="camera-viewport-wrap">
+                <video id="cameraVideo" autoplay playsinline muted class="camera-video"></video>
+                <div class="camera-target-box"></div>
+            </div>
+            <p style="font-size:12px; color:var(--text-secondary); text-align:center">
+                Point your camera at the QR code on the other device's Pair tab.
+            </p>
+        </div>
+    </div>
+
+    <!-- MODAL 4: 0% INTERNET 2-WAY OFFLINE LAN QR HANDSHAKE -->
+    <div id="offlineModal" class="modal-backdrop hidden">
+        <div class="glass-card modal-card">
+            <div class="modal-header">
+                <h3 class="staged-title">0% Internet LAN Handshake</h3>
+                <button type="button" class="icon-btn" style="width:28px; height:28px" onclick="window.convoyDiscovery.closeOfflineHandshakeModal()">
+                    <svg class="icon"><use href="#icon-close"></use></svg>
+                </button>
+            </div>
+            <div class="qr-display-box" style="padding:14px">
+                <div class="qr-svg-frame" id="offlineHandshakeQr"></div>
+                <p id="offlineStepLabel" style="font-size:12px; color:var(--text-secondary)">
+                    Step 1: Scan this Offer QR with the other device, or copy/paste the token below on an offline Wi-Fi router:
+                </p>
                 <div class="copy-input-group">
-                    <input type="text" id="pairInputPin" class="text-input" placeholder="Enter peer's 6-digit PIN or Name">
-                    <button type="button" class="btn-primary-sm" onclick="window.convoyDiscovery.confirmDevicePairing()">Pair Node</button>
+                    <input type="text" id="offlineLocalToken" class="text-input" readonly placeholder="Generating local ICE token...">
+                    <button type="button" class="btn-primary-sm" onclick="window.convoyDiscovery.copyOfflineToken()">
+                        <svg class="icon"><use href="#icon-copy"></use></svg> Copy
+                    </button>
+                </div>
+                <div class="copy-input-group">
+                    <input type="text" id="offlineRemoteTokenInput" class="text-input" placeholder="Paste peer's Offer or Answer token here">
+                    <button type="button" class="btn-primary-sm" onclick="window.convoyDiscovery.applyOfflineToken()">
+                        Connect
+                    </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- NODE SETTINGS MODAL -->
+    <!-- MODAL 5: NODE SETTINGS -->
     <div id="settingsModal" class="modal-backdrop hidden">
         <div class="glass-card modal-card">
             <div class="modal-header">
-                <h3 class="staged-title">convoyOS Node Settings</h3>
+                <h3 class="staged-title">Node Settings</h3>
                 <button type="button" class="icon-btn" style="width:28px; height:28px" onclick="window.convoyApp.closeSettingsModal()">
                     <svg class="icon"><use href="#icon-close"></use></svg>
                 </button>
             </div>
             <div style="display:flex; flex-direction:column; gap:14px; font-size:12px">
                 <div>
-                    <label style="color:var(--text-secondary); display:block; margin-bottom:4px">Device Display Name</label>
-                    <input type="text" id="settingDeviceName" class="text-input" style="width:100%; font-family:var(--font-sans)" value="M3 Max Studio">
+                    <label class="setting-label">Device Display Name</label>
+                    <input type="text" id="settingDeviceName" class="text-input" style="width:100%; font-family:var(--font-sans)">
                 </div>
                 <div>
-                    <label style="color:var(--text-secondary); display:block; margin-bottom:4px">Discovery & Auto-Accept Mode</label>
+                    <label class="setting-label">Incoming Transfer Behavior</label>
                     <select id="settingAutoAccept" class="text-input" style="width:100%; font-family:var(--font-sans)">
-                        <option value="paired">Auto-Accept from Paired Devices Only (Zero-Tap)</option>
+                        <option value="paired">Auto-Accept from Paired Devices</option>
                         <option value="always">Always Ask Before Receiving</option>
-                        <option value="all">Auto-Accept All Nearby & Shake Handshakes</option>
+                        <option value="all">Auto-Accept All Nearby Devices</option>
                     </select>
                 </div>
-                <div>
-                    <label style="color:var(--text-secondary); display:block; margin-bottom:4px">WebRTC Chunk Size</label>
-                    <select id="settingChunkSize" class="text-input" style="width:100%; font-family:var(--font-sans)">
-                        <option value="65536">64 KB (Recommended WebRTC Safe Maximum)</option>
-                        <option value="131072">128 KB (High-Speed Local Wi-Fi 6E)</option>
-                        <option value="32768">32 KB (Strict Mobile NAT Compatibility)</option>
-                    </select>
+                <div id="lanIpOverrideWrap">
+                    <label class="setting-label">Local Dev Server LAN IP (Optional for 127.0.0.1 testing)</label>
+                    <input type="text" id="settingLanIp" class="text-input" style="width:100%" placeholder="e.g. 192.168.1.105:5500">
                 </div>
             </div>
             <div class="modal-actions">
-                <button type="button" class="btn-modal primary" onclick="window.convoyApp.saveSettings()">Save Node Preferences</button>
+                <button type="button" class="btn-modal primary" onclick="window.convoyApp.saveSettings()">Save Preferences</button>
             </div>
         </div>
     </div>
 
-    <!-- TOAST CONTAINER -->
+    <!-- TOAST NOTIFICATIONS -->
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- FOOTER -->
     <footer class="app-footer">
         <div class="container footer-inner">
-            <p>convoyOS v0.0.1 • Unified Snapdrop + PairDrop + LocalSend + ToffeeShare Engine</p>
+            <p>convoyOS v0.0.1 • Offline-First P2P File Sharing</p>
             <div class="footer-links">
-                <span onclick="window.convoyApp.switchHubTab('offline')">Offline QR Mode</span>
-                <span onclick="window.convoyApp.switchHubTab('share')">P2P Link Stream</span>
-                <span onclick="window.convoyApp.openSettingsModal()">Node Config</span>
+                <span onclick="window.convoyApp.switchHubTab('nearby')">Nearby</span>
+                <span onclick="window.convoyApp.switchHubTab('pair')">Pair Device</span>
+                <span onclick="window.convoyApp.openSettingsModal()">Settings</span>
             </div>
         </div>
     </footer>
 
-    <!-- MODULAR JAVASCRIPT ENGINE -->
+    <!-- CHRONOLOGICAL JAVASCRIPT MODULES -->
     <script src="./js/qr.js"></script>
     <script src="./js/storage.js"></script>
     <script src="./js/dragdrop.js"></script>

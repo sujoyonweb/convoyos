@@ -1,5 +1,5 @@
 /**
- * convoyOS v0.0.1 - Universal File, Folder & Clipboard Staging Engine
+ * convoyOS v0.0.1 - File, Folder & Clipboard Staging Module
  */
 (function () {
     let stagedFiles = [];
@@ -11,7 +11,7 @@
 
         if (!dropZone) return;
 
-        ['dragenter', 'dragover'].forEach(evt => {
+        ['dragenter', 'dragover'].forEach((evt) => {
             dropZone.addEventListener(evt, (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -19,7 +19,7 @@
             });
         });
 
-        ['dragleave', 'drop'].forEach(evt => {
+        ['dragleave', 'drop'].forEach((evt) => {
             dropZone.addEventListener(evt, (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -33,9 +33,7 @@
                 const extracted = [];
                 for (let i = 0; i < items.length; i++) {
                     const entry = items[i].webkitGetAsEntry();
-                    if (entry) {
-                        await traverseFileTree(entry, '', extracted);
-                    }
+                    if (entry) await traverseFileTree(entry, '', extracted);
                 }
                 if (extracted.length > 0) {
                     addFilesToQueue(extracted);
@@ -47,28 +45,24 @@
             }
         });
 
-        if (fileInput) {
-            fileInput.addEventListener('change', (e) => {
-                if (e.target.files?.length) {
-                    addFilesToQueue(e.target.files);
-                    fileInput.value = '';
-                }
-            });
-        }
+        fileInput?.addEventListener('change', (e) => {
+            if (e.target.files?.length) {
+                addFilesToQueue(e.target.files);
+                fileInput.value = '';
+            }
+        });
 
-        if (folderInput) {
-            folderInput.addEventListener('change', (e) => {
-                if (e.target.files?.length) {
-                    addFilesToQueue(e.target.files);
-                    folderInput.value = '';
-                }
-            });
-        }
+        folderInput?.addEventListener('change', (e) => {
+            if (e.target.files?.length) {
+                addFilesToQueue(e.target.files);
+                folderInput.value = '';
+            }
+        });
 
-        // Global Ctrl+V Clipboard Listener
+        // Global Ctrl+V Clipboard Paste
         window.addEventListener('paste', (e) => {
-            const activeTag = document.activeElement?.tagName;
-            if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+            const tag = document.activeElement?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
             const items = e.clipboardData?.items;
             if (!items) return;
@@ -81,20 +75,18 @@
                     if (blob) pastedFiles.push(blob);
                 } else if (item.kind === 'string' && item.type === 'text/plain') {
                     item.getAsString((text) => {
-                        if (text && text.trim().length > 0 && pastedFiles.length === 0) {
-                            const snippetFile = new File(
+                        if (text && text.trim() && pastedFiles.length === 0) {
+                            const snippet = new File(
                                 [text],
                                 `clipboard_${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.txt`,
                                 { type: 'text/plain' }
                             );
-                            addFilesToQueue([snippetFile]);
+                            addFilesToQueue([snippet]);
                         }
                     });
                 }
             }
-            if (pastedFiles.length > 0) {
-                addFilesToQueue(pastedFiles);
-            }
+            if (pastedFiles.length > 0) addFilesToQueue(pastedFiles);
         });
     }
 
@@ -108,9 +100,9 @@
                 }, () => resolve());
             });
         } else if (entry.isDirectory) {
-            const dirReader = entry.createReader();
+            const reader = entry.createReader();
             return new Promise((resolve) => {
-                dirReader.readEntries(async (entries) => {
+                reader.readEntries(async (entries) => {
                     for (let i = 0; i < entries.length; i++) {
                         await traverseFileTree(entries[i], path + entry.name + '/', outList);
                     }
@@ -122,42 +114,35 @@
 
     async function pasteFromClipboard() {
         try {
-            if (navigator.clipboard && navigator.clipboard.readText) {
+            if (navigator.clipboard?.readText) {
                 const text = await navigator.clipboard.readText();
                 if (text && text.trim()) {
-                    const snippetFile = new File(
-                        [text],
-                        `clipboard_note_${Date.now().toString().slice(-4)}.txt`,
-                        { type: 'text/plain' }
-                    );
-                    addFilesToQueue([snippetFile]);
+                    const snippet = new File([text], `clipboard_${Date.now().toString().slice(-4)}.txt`, {
+                        type: 'text/plain'
+                    });
+                    addFilesToQueue([snippet]);
                     return;
                 }
             }
-            window.convoyApp.showToast('Press Ctrl+V (or Cmd+V) to paste files, screenshots, or text!', 'info');
-        } catch (err) {
-            window.convoyApp.showToast('Press Ctrl+V anywhere on the page to paste from clipboard', 'info');
+            window.convoyApp.showToast('Press Ctrl+V anywhere to paste files, screenshots, or text', 'info');
+        } catch (_) {
+            window.convoyApp.showToast('Press Ctrl+V anywhere to paste from clipboard', 'info');
         }
     }
 
     function addFilesToQueue(fileList) {
         if (!fileList || fileList.length === 0) return;
-        let added = 0;
         for (let i = 0; i < fileList.length; i++) {
             const f = fileList[i];
             f.convoyId = window.convoyStorage.computeFileFingerprint(f);
             stagedFiles.push(f);
-            added++;
         }
         updateStagedUI();
-        if (window.convoyTransfer) {
-            window.convoyTransfer.refreshShareLinkToken();
-        }
-        window.convoyApp.showToast(`Staged ${added} item(s) for P2P streaming`, 'success');
+        window.convoyApp.showToast(`Staged ${fileList.length} file(s)`, 'success');
     }
 
     function formatBytes(bytes) {
-        if (bytes === 0) return '0 B';
+        if (!bytes || bytes === 0) return '0 B';
         if (bytes < 1024) return `${bytes} B`;
         if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
         if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
@@ -184,9 +169,7 @@
         countEl.textContent = stagedFiles.length;
 
         const totalBytes = stagedFiles.reduce((acc, f) => acc + (f.size || 0), 0);
-        if (totalBytesEl) {
-            totalBytesEl.textContent = `• ${formatBytes(totalBytes)}`;
-        }
+        if (totalBytesEl) totalBytesEl.textContent = `• ${formatBytes(totalBytes)}`;
 
         listEl.innerHTML = '';
         stagedFiles.forEach((file, index) => {
@@ -200,7 +183,7 @@
                     </div>
                     <div class="file-meta-wrap">
                         <h4 class="file-item-name" title="${displayName}">${displayName}</h4>
-                        <p class="file-item-sub">${formatBytes(file.size)} • ${file.convoyId}</p>
+                        <p class="file-item-sub">${formatBytes(file.size)}</p>
                     </div>
                 </div>
                 <button type="button" class="file-remove-btn" onclick="window.convoyDragDrop.removeStagedFile(${index})" title="Remove">
@@ -214,13 +197,11 @@
     function removeStagedFile(index) {
         stagedFiles.splice(index, 1);
         updateStagedUI();
-        window.convoyApp.showToast('Removed file from queue', 'info');
     }
 
     function clearStagedFiles() {
         stagedFiles = [];
         updateStagedUI();
-        window.convoyApp.showToast('Staging queue cleared', 'info');
     }
 
     function getStagedFiles() {

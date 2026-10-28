@@ -1,4 +1,4 @@
-const CACHE_NAME = 'convoyos-offline-v0.0.1';
+const CACHE_NAME = 'convoyos-offline-v0.0.2';
 const OFFLINE_ASSETS = [
     './',
     './index.html',
@@ -6,6 +6,7 @@ const OFFLINE_ASSETS = [
     './css/variables.css',
     './css/reset.css',
     './css/main.css',
+    './css/components.css',
     './js/qr.js',
     './js/storage.js',
     './js/dragdrop.js',
@@ -48,10 +49,7 @@ self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
     event.respondWith(
         caches.match(event.request).then((cached) => {
-            return (
-                cached ||
-                fetch(event.request).catch(() => caches.match('./index.html'))
-            );
+            return cached || fetch(event.request).catch(() => caches.match('./index.html'));
         })
     );
 });

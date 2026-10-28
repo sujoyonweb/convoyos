@@ -1,35 +1,109 @@
 /**
- * convoyOS v0.0.1 - IndexedDB Resumable Chunk Ledger & Node Storage
+ * convoyOS v0.0.1 - Node Preferences, Paired Rooms & IndexedDB Chunk Ledger
  */
 (function () {
     const DB_NAME = 'convoyOS_DB';
     const DB_VERSION = 1;
     const STORE_LEDGER = 'chunk_ledger';
-    const SETTINGS_KEY = 'convoy_node_settings_v1';
-    const PAIRED_KEY = 'convoy_paired_devices_v1';
+    const SETTINGS_KEY = 'convoy_node_settings_v2';
+    const PAIRED_ROOMS_KEY = 'convoy_paired_rooms_v2';
 
     let dbInstance = null;
 
     const defaultSettings = {
-        nodeId: 'NODE-' + Math.random().toString(36).substring(2, 7).toUpperCase(),
+        nodeId: 'NODE-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
+        pairPin: String(Math.floor(100000 + Math.random() * 900000)),
         deviceName: detectDefaultDeviceName(),
+        deviceType: detectDeviceType(),
+        osName: detectOsName(),
         autoAccept: 'paired',
-        chunkSize: 65536 // 64 KB default
+        lanIpOverride: ''
     };
 
     function detectDefaultDeviceName() {
         const ua = navigator.userAgent || '';
-        if (/iPad/i.test(ua)) return 'iPad Pro Node';
-        if (/iPhone/i.test(ua)) return 'iPhone 16 Node';
-        if (/Android/i.test(ua)) return 'Android Mesh Node';
-        if (/Macintosh/i.test(ua)) return 'M3 Max Studio';
-        if (/Windows/i.test(ua)) return 'Windows 11 Workstation';
-        if (/Linux/i.test(ua)) return 'Linux Mesh Node';
-        return 'convoyOS Node';
+        const suffix = Math.floor(10 + Math.random() * 89);
+        if (/iPad/i.test(ua)) return `iPad (${suffix})`;
+        if (/iPhone/i.test(ua)) return `iPhone (${suffix})`;
+        if (/Android/i.test(ua)) return `Android (${suffix})`;
+        if (/Macintosh/i.test(ua)) return `Mac (${suffix})`;
+        if (/Windows/i.test(ua)) return `Windows PC (${suffix})`;
+        if (/Linux/i.test(ua)) return `Linux PC (${suffix})`;
+        return `Node (${suffix})`;
+    }
+
+    function detectDeviceType() {
+        const ua = navigator.userAgent || '';
+        if (/iPad|Tablet/i.test(ua)) return 'tablet';
+        if (/Mobi|Android|iPhone/i.test(ua)) return 'mobile';
+        return 'laptop';
+    }
+
+    function detectOsName() {
+        const ua = navigator.userAgent || '';
+        if (/Windows/i.test(ua)) return 'Windows';
+        if (/Macintosh|Mac OS/i.test(ua)) return 'macOS';
+        if (/Android/i.test(ua)) return 'Android';
+        if (/iPhone|iPad|iOS/i.test(ua)) return 'iOS';
+        if (/Linux/i.test(ua)) return 'Linux';
+        return 'WebRTC Peer';
+    }
+
+    function getSettings() {
+        try {
+            const raw = localStorage.getItem(SETTINGS_KEY);
+            if (!raw) {
+                localStorage.setItem(SETTINGS_KEY, JSON.stringify(defaultSettings));
+                return { ...defaultSettings };
+            }
+            const parsed = JSON.parse(raw);
+            const merged = { ...defaultSettings, ...parsed };
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+            return merged;
+        } catch (_) {
+            return { ...defaultSettings };
+        }
+    }
+
+    function saveSettings(newSettings) {
+        const merged = { ...getSettings(), ...newSettings };
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+        return merged;
+    }
+
+    // Stores shared 6-digit PIN rooms so paired devices auto-discover when both are online
+    function getPairedRooms() {
+        try {
+            const raw = localStorage.getItem(PAIRED_ROOMS_KEY);
+            return raw ? JSON.parse(raw) : [];
+        } catch (_) {
+            return [];
+        }
+    }
+
+    function addPairedRoom(pinCode) {
+        const cleanPin = String(pinCode).replace(/\D/g, '');
+        if (!cleanPin) return getPairedRooms();
+        const rooms = getPairedRooms();
+        if (!rooms.includes(cleanPin)) {
+            rooms.push(cleanPin);
+            localStorage.setItem(PAIRED_ROOMS_KEY, JSON.stringify(rooms));
+        }
+        return rooms;
+    }
+
+    function computeFileFingerprint(file) {
+        const input = `${file.name || 'file'}:${file.size || 0}:${file.lastModified || 0}`;
+        let hash = 2166136261;
+        for (let i = 0; i < input.length; i++) {
+            hash ^= input.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return 'FID-' + (hash >>> 0).toString(16).toUpperCase().padStart(8, '0');
     }
 
     function openDB() {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             if (dbInstance) return resolve(dbInstance);
             if (!window.indexedDB) return resolve(null);
 
@@ -48,69 +122,12 @@
         });
     }
 
-    function getSettings() {
-        try {
-            const raw = localStorage.getItem(SETTINGS_KEY);
-            if (!raw) {
-                localStorage.setItem(SETTINGS_KEY, JSON.stringify(defaultSettings));
-                return { ...defaultSettings };
-            }
-            return { ...defaultSettings, ...JSON.parse(raw) };
-        } catch (err) {
-            return { ...defaultSettings };
-        }
-    }
-
-    function saveSettings(newSettings) {
-        const merged = { ...getSettings(), ...newSettings };
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
-        return merged;
-    }
-
-    function getPairedDevices() {
-        try {
-            const raw = localStorage.getItem(PAIRED_KEY);
-            return raw ? JSON.parse(raw) : [];
-        } catch (err) {
-            return [];
-        }
-    }
-
-    function addPairedDevice(device) {
-        const list = getPairedDevices();
-        const exists = list.findIndex(d => d.id === device.id || d.name === device.name);
-        if (exists >= 0) {
-            list[exists] = { ...list[exists], ...device, paired: true };
-        } else {
-            list.push({ ...device, paired: true, pairedAt: Date.now() });
-        }
-        localStorage.setItem(PAIRED_KEY, JSON.stringify(list));
-        return list;
-    }
-
-    // Fast <2ms File Fingerprinting
-    function computeFileFingerprint(file) {
-        const name = file.name || 'unnamed';
-        const size = file.size || 0;
-        const mtime = file.lastModified || 0;
-        let hash = 2166136261;
-        const input = `${name}:${size}:${mtime}`;
-        for (let i = 0; i < input.length; i++) {
-            hash ^= input.charCodeAt(i);
-            hash = Math.imul(hash, 16777619);
-        }
-        return 'FID-' + (hash >>> 0).toString(16).toUpperCase().padStart(8, '0');
-    }
-
     async function saveCheckpoint(checkpoint) {
         const db = await openDB();
-        if (!db) return;
+        if (!db) return false;
         return new Promise((resolve) => {
             const tx = db.transaction(STORE_LEDGER, 'readwrite');
-            tx.objectStore(STORE_LEDGER).put({
-                ...checkpoint,
-                updatedAt: Date.now()
-            });
+            tx.objectStore(STORE_LEDGER).put({ ...checkpoint, updatedAt: Date.now() });
             tx.oncomplete = () => {
                 renderLedgerUI();
                 resolve(true);
@@ -151,9 +168,7 @@
             tx.objectStore(STORE_LEDGER).clear();
             tx.oncomplete = () => {
                 renderLedgerUI();
-                if (window.convoyApp) {
-                    window.convoyApp.showToast('Cleared resumable chunk ledger', 'info');
-                }
+                window.convoyApp?.showToast('Cleared paused transfer history', 'info');
                 resolve(true);
             };
         });
@@ -174,21 +189,21 @@
         card.classList.remove('hidden');
         listEl.innerHTML = '';
 
-        items.forEach(item => {
-            const pct = Math.min(99, Math.round((item.chunkIndex / item.totalChunks) * 100));
+        items.forEach((item) => {
+            const pct = Math.min(99, Math.round((item.byteOffset / item.totalBytes) * 100));
             const row = document.createElement('div');
             row.className = 'ledger-item';
             row.innerHTML = `
                 <div style="min-width:0; flex:1">
                     <div style="font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">
-                        ${item.fileName} <span style="font-family:var(--font-mono); font-size:10px; color:#fbbf24">(${pct}% • Chunk ${item.chunkIndex}/${item.totalChunks})</span>
+                        ${item.fileName} <span style="font-family:var(--font-mono); font-size:10px; color:#fbbf24">(${pct}%)</span>
                     </div>
                     <div style="font-size:10px; color:var(--text-secondary); font-family:var(--font-mono)">
-                        Target: ${item.deviceName} • ID: ${item.id}
+                        Peer: ${item.deviceName}
                     </div>
                 </div>
-                <div style="display:flex; gap:6px; shrink:0">
-                    <button type="button" class="btn-primary-sm" onclick="window.convoyTransfer.resumeCheckpoint('${item.id}')">
+                <div style="display:flex; gap:6px">
+                    <button type="button" class="btn-primary-sm" onclick="window.convoyTransfer.resumeFromLedger('${item.id}')">
                         <svg class="icon"><use href="#icon-play"></use></svg> Resume
                     </button>
                     <button type="button" class="file-remove-btn" onclick="window.convoyStorage.deleteCheckpoint('${item.id}')">
@@ -203,8 +218,8 @@
     window.convoyStorage = {
         getSettings,
         saveSettings,
-        getPairedDevices,
-        addPairedDevice,
+        getPairedRooms,
+        addPairedRoom,
         computeFileFingerprint,
         saveCheckpoint,
         getCheckpoints,
