@@ -1,16 +1,13 @@
 /**
- * convoyOS v0.0.1 - Main Application Controller
+ * convoyOS v0.0.1 - Main UI Controller
  */
 (function () {
-    let shakeModeEnabled = true;
-
     document.addEventListener('DOMContentLoaded', () => {
         applySettingsToHeader();
         window.convoyDragDrop.init();
         window.convoyDiscovery.init();
         window.convoyTransfer.init();
         window.convoyStorage.renderLedgerUI();
-        setupNetworkStatusWatcher();
         registerServiceWorker();
     });
 
@@ -20,7 +17,7 @@
         const badgeEl = document.getElementById('nodeInitialsBadge');
         const inputName = document.getElementById('settingDeviceName');
         const selectAccept = document.getElementById('settingAutoAccept');
-        const selectChunk = document.getElementById('settingChunkSize');
+        const inputLanIp = document.getElementById('settingLanIp');
 
         if (nameEl) nameEl.textContent = settings.deviceName;
         if (badgeEl) {
@@ -33,20 +30,21 @@
 
         if (inputName) inputName.value = settings.deviceName;
         if (selectAccept) selectAccept.value = settings.autoAccept;
-        if (selectChunk) selectChunk.value = String(settings.chunkSize);
+        if (inputLanIp) inputLanIp.value = settings.lanIpOverride || '';
     }
 
     function switchHubTab(tabName) {
-        const tabs = ['nearby', 'share', 'offline'];
+        const tabs = ['nearby', 'pair', 'global'];
         const titles = {
-            nearby: 'Nearby & Paired Nodes',
-            share: 'P2P Link & QR Stream',
-            offline: '100% Offline LAN & Host'
+            nearby: 'Nearby Devices',
+            pair: 'Pair & Connect',
+            global: 'Global Link'
         };
 
-        tabs.forEach(t => {
-            const btn = document.getElementById('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1));
-            const panel = document.getElementById('tabPanel' + t.charAt(0).toUpperCase() + t.slice(1));
+        tabs.forEach((t) => {
+            const suffix = t.charAt(0).toUpperCase() + t.slice(1);
+            const btn = document.getElementById('tabBtn' + suffix);
+            const panel = document.getElementById('tabPanel' + suffix);
             if (btn) btn.classList.toggle('active', t === tabName);
             if (panel) panel.classList.toggle('hidden', t !== tabName);
         });
@@ -55,39 +53,17 @@
         if (heading && titles[tabName]) {
             heading.textContent = titles[tabName];
         }
-    }
 
-    function toggleShakeMode() {
-        shakeModeEnabled = !shakeModeEnabled;
-        const headerBtn = document.getElementById('shakeHeaderBtn');
-        const actionBtn = document.getElementById('shakeActionBtn');
-        if (headerBtn) headerBtn.classList.toggle('active', shakeModeEnabled);
-        if (actionBtn) actionBtn.classList.toggle('shake-active', shakeModeEnabled);
-
-        showToast(
-            shakeModeEnabled
-                ? 'Shake-to-Send gesture armed! Shake devices together to auto-transfer.'
-                : 'Shake-to-Send gesture paused',
-            'info'
-        );
-    }
-
-    function isShakeModeEnabled() {
-        return shakeModeEnabled;
-    }
-
-    function triggerInstantShake() {
-        window.convoyDiscovery.broadcastShakeSignal();
-        const staged = window.convoyDragDrop.getStagedFiles();
-        if (staged.length === 0) {
-            showToast('Shake handshake broadcast sent! Stage a file on the left to auto-send on shake.', 'info');
-            return;
+        if (tabName === 'pair') {
+            window.convoyDiscovery.renderPairTabQR();
         }
-        const targetPeer = window.convoyDiscovery.getFirstAvailablePeer();
-        if (targetPeer) {
-            showToast(`Shake Handshake matched with ${targetPeer.name}! Starting zero-tap stream...`, 'success');
-            window.convoyTransfer.startTransferToDevice(targetPeer);
-        }
+    }
+
+    function setNetworkBadge(isOnline, statusText) {
+        const dot = document.getElementById('networkStatusDot');
+        const label = document.getElementById('networkModeLabel');
+        if (dot) dot.classList.toggle('offline', !isOnline);
+        if (label) label.textContent = statusText;
     }
 
     function openSettingsModal() {
@@ -104,34 +80,19 @@
     function saveSettings() {
         const nameVal = document.getElementById('settingDeviceName')?.value.trim() || 'convoyOS Node';
         const acceptVal = document.getElementById('settingAutoAccept')?.value || 'paired';
-        const chunkVal = Number(document.getElementById('settingChunkSize')?.value || 65536);
+        const lanIpVal = document.getElementById('settingLanIp')?.value.trim() || '';
 
         window.convoyStorage.saveSettings({
             deviceName: nameVal,
             autoAccept: acceptVal,
-            chunkSize: chunkVal
+            lanIpOverride: lanIpVal
         });
 
         applySettingsToHeader();
+        window.convoyDiscovery.renderPairTabQR();
+        window.convoyDiscovery.refreshPeers();
         closeSettingsModal();
-        showToast('Saved convoyOS node preferences', 'success');
-    }
-
-    function setupNetworkStatusWatcher() {
-        const dot = document.getElementById('networkStatusDot');
-        const label = document.getElementById('networkModeLabel');
-        const subnetEl = document.getElementById('subnetStatValue');
-
-        function updateOnlineStatus() {
-            const online = navigator.onLine;
-            if (dot) dot.classList.toggle('offline', !online);
-            if (label) label.textContent = online ? 'Mesh Ready' : 'Offline LAN Mode';
-            if (subnetEl) subnetEl.textContent = online ? 'LAN Subnet #48A' : 'Ad-Hoc Offline QR';
-        }
-
-        window.addEventListener('online', updateOnlineStatus);
-        window.addEventListener('offline', updateOnlineStatus);
-        updateOnlineStatus();
+        showToast('Preferences saved', 'success');
     }
 
     function showToast(message, type = 'info') {
@@ -178,9 +139,7 @@
 
     window.convoyApp = {
         switchHubTab,
-        toggleShakeMode,
-        isShakeModeEnabled,
-        triggerInstantShake,
+        setNetworkBadge,
         openSettingsModal,
         closeSettingsModal,
         saveSettings,
