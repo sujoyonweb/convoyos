@@ -207,17 +207,42 @@
                     </div>
                 </div>
 
-                <!-- TAB 3: GLOBAL LINK (ToffeeShare Cross-Continent Mode - Saved for Final Step) -->
+                <!-- TAB 3: GLOBAL LINK (ToffeeShare Direct P2P Link & Code Sharing) -->
                 <div id="tabPanelGlobal" class="tab-panel-content hidden">
                     <div class="qr-display-box">
-                        <div class="upload-icon-box" style="width:56px; height:56px; font-size:22px">
-                            <svg class="icon"><use href="#icon-globe"></use></svg>
+                        <div class="qr-svg-frame" id="globalQrContainer" title="Scan anywhere to download staged files"></div>
+
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center">
+                            <span id="globalShareStatus" class="mono-badge" style="color:#60a5fa; border-color:var(--accent-blue-border)">
+                                Select files on the left to activate link
+                            </span>
                         </div>
-                        <h4 style="font-size:14px; font-weight:600; color:#fff">Global Direct Link (ToffeeShare Mode)</h4>
-                        <p style="font-size:12px; color:var(--text-secondary); max-width:290px">
-                            Share staged files across continents via a direct P2P download link and QR code.
-                        </p>
-                        <span class="version-badge" style="margin-top:4px">Coming in Final Step</span>
+
+                        <div style="display:flex; align-items:center; gap:8px">
+                            <div class="pin-code-display" id="globalCodeDisplay">------</div>
+                            <button type="button" class="icon-btn" title="Generate New Link Code" onclick="window.convoyDiscovery.regenerateGlobalShareCode()">
+                                <svg class="icon"><use href="#icon-rotate"></use></svg>
+                            </button>
+                        </div>
+
+                        <!-- Direct Shareable P2P URL -->
+                        <div class="copy-input-group">
+                            <input type="text" id="globalUrlInput" class="text-input" readonly value="">
+                            <button type="button" class="btn-primary-sm" onclick="window.convoyDiscovery.copyGlobalShareLink()">
+                                <svg class="icon"><use href="#icon-copy"></use></svg> Copy
+                            </button>
+                            <button type="button" class="secondary-action-btn" style="padding:6px 12px" onclick="window.convoyDiscovery.nativeShareGlobalLink()" title="Share Link">
+                                <svg class="icon"><use href="#icon-send"></use></svg>
+                            </button>
+                        </div>
+
+                        <!-- Download from Another Device's Share Code -->
+                        <div class="copy-input-group" style="padding-top:4px; border-top:1px solid var(--border-subtle)">
+                            <input type="text" id="globalJoinCodeInput" class="text-input" maxlength="7" placeholder="Receive via 6-digit Share Code...">
+                            <button type="button" class="btn-primary-sm" onclick="window.convoyDiscovery.joinGlobalShareByCode()">
+                                <svg class="icon"><use href="#icon-cloud-down"></use></svg> Download
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -320,7 +345,7 @@
                 <div class="camera-target-box"></div>
             </div>
             <p style="font-size:12px; color:var(--text-secondary); text-align:center">
-                Point your camera at the QR code on the other device's Pair tab.
+                Point your camera at the QR code on the other device's Pair or Global Link tab.
             </p>
         </div>
     </div>
@@ -398,6 +423,7 @@
             <div class="footer-links">
                 <span onclick="window.convoyApp.switchHubTab('nearby')">Nearby</span>
                 <span onclick="window.convoyApp.switchHubTab('pair')">Pair Device</span>
+                <span onclick="window.convoyApp.switchHubTab('global')">Global Link</span>
                 <span onclick="window.convoyApp.openSettingsModal()">Settings</span>
             </div>
         </div>

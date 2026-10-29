@@ -1,11 +1,8 @@
 /**
- * convoyOS v0.0.1 - Bulletproof Cross-Device Discovery & Signaling Engine
- * Fixes:
- * - Eliminates BroadcastChannel DataCloneError on WebRTC SDP/ICE objects
- * - Prioritizes wsClient.send() before localBroadcast
- * - Automatically triggers background WebRTC pre-warming when a peer is discovered
+ * convoyOS v0.0.1 - Bulletproof Cross-Device Discovery, Global Link (ToffeeShare) & Signaling Engine
  */
 (function () {
+    const PUBLIC_GITHUB_PAGES_URL = 'https://sujoyonweb.github.io/convoyos/';
     const BROKER_URLS = [
         'wss://broker.emqx.io:8084/mqtt',
         'wss://broker.hivemq.com:8884/mqtt'
@@ -13,6 +10,7 @@
     const HEARTBEAT_MS = 3500;
     const PEER_TIMEOUT_MS = 20000;
     const ACK_COOLDOWN_MS = 2500;
+    const SHARE_CODE_SESSION_KEY = 'convoy_global_share_code_v2';
 
     let brokerIndex = 0;
     let wsClient = null;
@@ -25,15 +23,30 @@
     const seenMsgIds = new Set();
 
     let ipRoomTopic = 'convoyos/v2/lan/global_default';
+    let globalShareCode = getOrCreateShareCode();
+    let activeJoinCode = null;
+    let waitingGlobalReceiver = null;
+    let globalRequestRetryTimer = null;
+
     let cameraStream = null;
     let scanLoopActive = false;
     let offlinePc = null;
 
-    async function init() {
-        renderPairTabQR();
-        checkUrlForPairPin();
+    function getOrCreateShareCode() {
+        try {
+            let code = sessionStorage.getItem(SHARE_CODE_SESSION_KEY);
+            if (!code || code.length !== 6) {
+                code = String(Math.floor(100000 + Math.random() * 900000));
+                sessionStorage.setItem(SHARE_CODE_SESSION_KEY, code);
+            }
+            return code;
+        } catch (_) {
+            return String(Math.floor(100000 + Math.random() * 900000));
+        }
+    }
 
-        // 1. Same-browser multi-tab discovery
+    async function init() {
+        // 1. Open same-browser multi-tab channel FIRST so local #share= links work instantaneously
         if ('BroadcastChannel' in window) {
             localBroadcast = new BroadcastChannel('convoyos_local_tabs_v4');
             localBroadcast.onmessage = (e) => {
@@ -48,10 +61,16 @@
             };
         }
 
-        // 2. Connect to WebSocket MQTT broker immediately
+        renderPairTabQR();
+        renderGlobalShareTab();
+
+        // 2. Check URL hash (#share=XXXXXX or #pair=XXXXXX) before connecting
+        checkUrlForIncomingHash();
+
+        // 3. Connect to WebSocket MQTT broker
         connectMqttWebSocket();
 
-        // 3. Resolve shared router IPv4 via STUN + HTTP fallback
+        // 4. Resolve shared router IPv4 via STUN + HTTP fallback
         resolveSharedIpv4Room().then((resolvedTopic) => {
             if (resolvedTopic && resolvedTopic !== ipRoomTopic) {
                 ipRoomTopic = resolvedTopic;
@@ -62,7 +81,7 @@
             }
         });
 
-        // 4. Periodic heartbeat & stale-peer cleanup
+        // 5. Periodic heartbeat & stale-peer cleanup
         setInterval(() => {
             if (!wsConnected && navigator.onLine) {
                 connectMqttWebSocket();
@@ -71,7 +90,7 @@
             pruneStalePeers();
         }, HEARTBEAT_MS);
 
-        // 5. Instant recovery when switching back to tab or waking phone screen
+        // 6. Instant recovery when switching back to tab or waking phone screen
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
                 if (!wsConnected && navigator.onLine) connectMqttWebSocket();
@@ -285,7 +304,13 @@
                         wsConnected = true;
                         window.convoyApp?.setNetworkBadge(true, 'Live Ready');
                         subscribeAllRooms();
-                        setTimeout(() => announcePresence(true), 100);
+                        setTimeout(() => {
+                            announcePresence(true);
+                            // If this tab was opened with #share=XXXXXX, fire the MQTT share request now
+                            if (activeJoinCode) {
+                                dispatchGlobalShareRequestPackets(activeJoinCode);
+                            }
+                        }, 100);
                     } else if (packetType === 3) {
                         const topicLen = (rxBuffer[offset] << 8) | rxBuffer[offset + 1];
                         const topicStr = new TextDecoder().decode(rxBuffer.slice(offset + 2, offset + 2 + topicLen));
@@ -334,14 +359,13 @@
             `convoyos/v2/node/${s.nodeId}`,
             `convoyos/v2/bin/${s.nodeId}`,
             `convoyos/v2/pin/${s.pairPin}`,
+            `convoyos/v2/share/${globalShareCode}`,
             ...window.convoyStorage.getPairedRooms().map((pin) => `convoyos/v2/pin/${pin}`)
         ]);
 
         topics.forEach((t) => subscribeTopic(t));
     }
 
-    // CRITICAL FIX: Send over WebSocket FIRST, and pass a plain JSON clone to BroadcastChannel
-    // so native RTCSessionDescription / RTCIceCandidate objects NEVER throw DataCloneError!
     function publishSignaling(topic, payloadObj) {
         try {
             const jsonStr = JSON.stringify(payloadObj);
@@ -443,7 +467,6 @@
             msgId: 'M-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
         };
 
-        // Route directly to target's personal inbox
         publishSignaling(`convoyos/v2/node/${targetNodeId}`, packet);
     }
 
@@ -470,7 +493,6 @@
 
         if (isNew) {
             renderDeviceList();
-            // Pre-warm direct WebRTC DataChannel in the background so it is open before the user even clicks!
             if (window.convoyTransfer?.prewarmPeerConnection) {
                 window.convoyTransfer.prewarmPeerConnection(updatedPeer);
             }
@@ -516,9 +538,24 @@
             renderDeviceList();
             window.convoyApp.switchHubTab('nearby');
             window.convoyApp.showToast(`Paired with ${data.peer.name}!`, 'success');
+        } else if (
+            data.type === 'GLOBAL_SHARE_REQUEST' &&
+            String(data.shareCode) === String(globalShareCode) &&
+            data.peer &&
+            data.peer.id !== s.nodeId
+        ) {
+            handleIncomingGlobalShareRequest(data.peer);
+        } else if (data.type === 'GLOBAL_SHARE_WAITING' && data.targetId === s.nodeId) {
+            if (globalRequestRetryTimer) clearInterval(globalRequestRetryTimer);
+            activeJoinCode = null;
+            window.convoyApp.showToast(`Connected to ${data.senderName}! Waiting for sender to stage files...`, 'info');
         } else if (data.type === 'WEBRTC_SIGNAL' && data.targetId === s.nodeId) {
+            if (globalRequestRetryTimer) clearInterval(globalRequestRetryTimer);
+            activeJoinCode = null;
             window.convoyTransfer.handleIncomingWebRtcSignal(data);
         } else if (data.type === 'TRANSFER_CTRL' && data.targetId === s.nodeId) {
+            if (globalRequestRetryTimer) clearInterval(globalRequestRetryTimer);
+            activeJoinCode = null;
             window.convoyTransfer.handleSignalingTransferCtrl(data);
         }
     }
@@ -537,6 +574,186 @@
             }
         });
         if (removedAny) renderDeviceList();
+    }
+
+    // =========================================================================
+    // GLOBAL LINK (TOFFEESHARE MODE) ENGINE
+    // =========================================================================
+    function getShareableBaseUrl() {
+        const s = window.convoyStorage.getSettings();
+        // 1. If user specified a custom LAN IP override in Settings, use it
+        if (s.lanIpOverride && s.lanIpOverride.trim()) {
+            const clean = s.lanIpOverride.trim().replace(/^https?:\/\//, '');
+            return `http://${clean}${window.location.pathname}`;
+        }
+        // 2. If running on localhost / 127.0.0.1, use sujoyonweb's live GitHub Pages URL
+        // so phones scanning the QR code open the real hosted web app instead of failing on 127.0.0.1!
+        const host = window.location.hostname;
+        if (host === '127.0.0.1' || host === 'localhost' || window.location.protocol === 'file:') {
+            return PUBLIC_GITHUB_PAGES_URL;
+        }
+        return window.location.origin + window.location.pathname;
+    }
+
+    function renderGlobalShareTab() {
+        const codeEl = document.getElementById('globalCodeDisplay');
+        const urlEl = document.getElementById('globalUrlInput');
+
+        if (codeEl) {
+            codeEl.textContent = globalShareCode.slice(0, 3) + '-' + globalShareCode.slice(3);
+        }
+
+        const shareUrl = `${getShareableBaseUrl()}#share=${globalShareCode}`;
+        if (urlEl) {
+            urlEl.value = shareUrl;
+        }
+
+        window.convoyQR.renderInto('globalQrContainer', shareUrl, '#0c0c0c');
+        updateGlobalShareBadge();
+    }
+
+    function updateGlobalShareBadge() {
+        const statusEl = document.getElementById('globalShareStatus');
+        if (!statusEl) return;
+
+        const files = window.convoyDragDrop?.getStagedFiles() || [];
+        if (files.length === 0) {
+            statusEl.textContent = 'Select files on the left to activate link';
+            statusEl.style.color = 'var(--text-secondary)';
+            statusEl.style.borderColor = 'var(--border-subtle)';
+        } else {
+            const totalBytes = files.reduce((acc, f) => acc + (f.size || 0), 0);
+            const sizeStr = window.convoyDragDrop.formatBytes(totalBytes);
+            statusEl.textContent = `${files.length} file(s) ready (${sizeStr}) • Link Active`;
+            statusEl.style.color = '#34d399';
+            statusEl.style.borderColor = 'var(--accent-emerald-border)';
+        }
+    }
+
+    function regenerateGlobalShareCode() {
+        globalShareCode = String(Math.floor(100000 + Math.random() * 900000));
+        try {
+            sessionStorage.setItem(SHARE_CODE_SESSION_KEY, globalShareCode);
+        } catch (_) {}
+        waitingGlobalReceiver = null;
+        subscribeTopic(`convoyos/v2/share/${globalShareCode}`);
+        renderGlobalShareTab();
+        window.convoyApp.showToast('Generated new Global Share link & QR code', 'info');
+    }
+
+    function copyGlobalShareLink() {
+        const files = window.convoyDragDrop.getStagedFiles();
+        if (files.length === 0) {
+            window.convoyApp.showToast('Tip: Select files on the left so recipients can download immediately!', 'info');
+        }
+        const urlEl = document.getElementById('globalUrlInput');
+        const shareUrl = urlEl?.value || `${getShareableBaseUrl()}#share=${globalShareCode}`;
+        navigator.clipboard?.writeText(shareUrl);
+        window.convoyApp.showToast(`Copied Global Link (${globalShareCode.slice(0, 3)}-${globalShareCode.slice(3)})!`, 'success');
+    }
+
+    async function nativeShareGlobalLink() {
+        const urlEl = document.getElementById('globalUrlInput');
+        const shareUrl = urlEl?.value || `${getShareableBaseUrl()}#share=${globalShareCode}`;
+        const files = window.convoyDragDrop.getStagedFiles();
+        const title = files.length > 0
+            ? `Download ${files.length} file(s) via convoyOS P2P`
+            : 'Download files via convoyOS P2P';
+
+        if (navigator.share) {
+            try {
+                await navigator.share({
+                    title: 'convoyOS Direct P2P Share',
+                    text: title,
+                    url: shareUrl
+                });
+                return;
+            } catch (_) {}
+        }
+        copyGlobalShareLink();
+    }
+
+    function handleIncomingGlobalShareRequest(receiverPeer) {
+        registerOrRefreshPeer(receiverPeer, true);
+        const files = window.convoyDragDrop.getStagedFiles();
+
+        if (files.length === 0) {
+            waitingGlobalReceiver = receiverPeer;
+            sendDirectSignal(receiverPeer.id, {
+                type: 'GLOBAL_SHARE_WAITING',
+                senderName: window.convoyStorage.getSettings().deviceName
+            });
+            window.convoyApp.showToast(
+                `${receiverPeer.name} connected via Global Link! Select files on the left to start sending.`,
+                'info'
+            );
+            return;
+        }
+
+        waitingGlobalReceiver = null;
+        window.convoyApp.showToast(`${receiverPeer.name} connected via Global Link! Starting stream...`, 'success');
+        window.convoyTransfer.initiateWebRtcTransfer(receiverPeer);
+    }
+
+    function onFilesStaged() {
+        updateGlobalShareBadge();
+        if (waitingGlobalReceiver) {
+            const peerToServe = waitingGlobalReceiver;
+            waitingGlobalReceiver = null;
+            window.convoyTransfer.initiateWebRtcTransfer(peerToServe);
+        }
+    }
+
+    function dispatchGlobalShareRequestPackets(rawCode) {
+        const shareTopic = `convoyos/v2/share/${rawCode}`;
+        subscribeTopic(shareTopic);
+
+        const sendReq = () => {
+            if (!activeJoinCode) return;
+            const requestPacket = {
+                type: 'GLOBAL_SHARE_REQUEST',
+                shareCode: rawCode,
+                peer: buildSelfPeerDescriptor(true),
+                msgId: 'G-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)
+            };
+            // Broadcast over share topic + default rooms so sender receives it with 0 delay
+            publishSignaling(shareTopic, requestPacket);
+            publishSignaling(ipRoomTopic, requestPacket);
+            publishSignaling('convoyos/v2/lan/global_default', requestPacket);
+        };
+
+        sendReq();
+        if (globalRequestRetryTimer) clearInterval(globalRequestRetryTimer);
+        let retries = 0;
+        globalRequestRetryTimer = setInterval(() => {
+            if (!activeJoinCode || retries >= 6) {
+                clearInterval(globalRequestRetryTimer);
+                return;
+            }
+            retries++;
+            sendReq();
+        }, 1600);
+    }
+
+    function joinGlobalShareByCode(codeOverride) {
+        const input = document.getElementById('globalJoinCodeInput');
+        const rawCode = String(codeOverride || input?.value || '').replace(/\D/g, '');
+        if (rawCode.length !== 6) {
+            window.convoyApp.showToast('Please enter a valid 6-digit Share Code', 'error');
+            return;
+        }
+
+        activeJoinCode = rawCode;
+        if (input) input.value = '';
+
+        window.convoyApp.showToast(`Connecting to Global Share #${rawCode.slice(0, 3)}-${rawCode.slice(3)}...`, 'success');
+
+        // Send immediately (works in <5ms for same-PC browser tabs via BroadcastChannel, and over MQTT if connected)
+        dispatchGlobalShareRequestPackets(rawCode);
+
+        if (!wsConnected && navigator.onLine) {
+            connectMqttWebSocket();
+        }
     }
 
     // =========================================================================
@@ -565,7 +782,7 @@
                     <div>
                         <h4 style="font-size:13px; font-weight:600; color:#fff">Scanning for Active Devices...</h4>
                         <p style="font-size:12px; color:var(--text-secondary); max-width:260px; margin-top:4px">
-                            Open convoyOS on another device on the same Wi-Fi, or use the <strong style="color:#60a5fa; cursor:pointer" onclick="window.convoyApp.switchHubTab('pair')">Pair</strong> tab to connect via QR or PIN.
+                            Open convoyOS on another device on the same Wi-Fi, or use <strong style="color:#60a5fa; cursor:pointer" onclick="window.convoyApp.switchHubTab('pair')">Pair</strong> / <strong style="color:#60a5fa; cursor:pointer" onclick="window.convoyApp.switchHubTab('global')">Global Link</strong>.
                         </p>
                     </div>
                 </div>
@@ -625,15 +842,6 @@
     // =========================================================================
     // PAIR TAB & OFFLINE HANDSHAKE
     // =========================================================================
-    function getShareableBaseUrl() {
-        const s = window.convoyStorage.getSettings();
-        if (s.lanIpOverride && s.lanIpOverride.trim()) {
-            const clean = s.lanIpOverride.trim().replace(/^https?:\/\//, '');
-            return `http://${clean}${window.location.pathname}`;
-        }
-        return window.location.origin + window.location.pathname;
-    }
-
     function renderPairTabQR() {
         const s = window.convoyStorage.getSettings();
         const pinEl = document.getElementById('pairPinDisplay');
@@ -668,15 +876,27 @@
         window.convoyApp.showToast(`Joined PIN room ${rawPin}! Discovering peer...`, 'success');
     }
 
-    function checkUrlForPairPin() {
+    function checkUrlForIncomingHash() {
         const hash = window.location.hash || '';
-        const match = hash.match(/#pair=(\d{6})/);
-        if (match && match[1]) {
-            const scannedPin = match[1];
+
+        const pairMatch = hash.match(/#pair=(\d{6})/);
+        if (pairMatch && pairMatch[1]) {
+            const scannedPin = pairMatch[1];
             history.replaceState(null, '', window.location.pathname);
             setTimeout(() => {
                 connectWithPin(scannedPin);
-            }, 900);
+            }, 300);
+            return;
+        }
+
+        const shareMatch = hash.match(/#share=(\d{6})/);
+        if (shareMatch && shareMatch[1]) {
+            const shareCode = shareMatch[1];
+            history.replaceState(null, '', window.location.pathname);
+            setTimeout(() => {
+                window.convoyApp?.switchHubTab('global');
+                joinGlobalShareByCode(shareCode);
+            }, 250);
         }
     }
 
@@ -731,6 +951,13 @@
     }
 
     function handleScannedQrValue(raw) {
+        const shareMatch = raw.match(/share=(\d{6})/);
+        if (shareMatch && shareMatch[1]) {
+            window.convoyApp.switchHubTab('global');
+            joinGlobalShareByCode(shareMatch[1]);
+            return;
+        }
+
         const pinMatch = raw.match(/pair=(\d{6})/) || raw.match(/^(\d{6})$/);
         if (pinMatch && pinMatch[1]) {
             connectWithPin(pinMatch[1]);
@@ -833,6 +1060,13 @@
         refreshPeers,
         renderDeviceList,
         renderPairTabQR,
+        renderGlobalShareTab,
+        updateGlobalShareBadge,
+        regenerateGlobalShareCode,
+        copyGlobalShareLink,
+        nativeShareGlobalLink,
+        joinGlobalShareByCode,
+        onFilesStaged,
         connectWithPin,
         startCameraScanner,
         stopCameraScanner,

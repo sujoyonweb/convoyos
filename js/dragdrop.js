@@ -138,6 +138,7 @@
             stagedFiles.push(f);
         }
         updateStagedUI();
+        window.convoyDiscovery?.onFilesStaged?.();
         window.convoyApp.showToast(`Staged ${fileList.length} file(s)`, 'success');
     }
 
@@ -161,6 +162,7 @@
         if (stagedFiles.length === 0) {
             prompt.classList.remove('hidden');
             container.classList.add('hidden');
+            window.convoyDiscovery?.updateGlobalShareBadge?.();
             return;
         }
 
@@ -192,6 +194,8 @@
             `;
             listEl.appendChild(item);
         });
+
+        window.convoyDiscovery?.updateGlobalShareBadge?.();
     }
 
     function removeStagedFile(index) {

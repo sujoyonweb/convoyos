@@ -1,5 +1,6 @@
 /**
  * convoyOS v0.0.1 - Node Preferences, Paired Rooms & IndexedDB Chunk Ledger
+ * Fixes: Uses per-tab sessionStorage for nodeId so multiple tabs on the same PC can transfer files via Global Link.
  */
 (function () {
     const DB_NAME = 'convoyOS_DB';
@@ -7,11 +8,25 @@
     const STORE_LEDGER = 'chunk_ledger';
     const SETTINGS_KEY = 'convoy_node_settings_v2';
     const PAIRED_ROOMS_KEY = 'convoy_paired_rooms_v2';
+    const TAB_NODE_ID_KEY = 'convoy_tab_node_id_v2';
 
     let dbInstance = null;
 
+    function getOrCreateTabNodeId() {
+        try {
+            let tabId = sessionStorage.getItem(TAB_NODE_ID_KEY);
+            if (!tabId) {
+                tabId = 'NODE-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                sessionStorage.setItem(TAB_NODE_ID_KEY, tabId);
+            }
+            return tabId;
+        } catch (_) {
+            return 'NODE-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
+    }
+
     const defaultSettings = {
-        nodeId: 'NODE-' + Math.random().toString(36).substring(2, 8).toUpperCase(),
+        nodeId: getOrCreateTabNodeId(),
         pairPin: String(Math.floor(100000 + Math.random() * 900000)),
         deviceName: detectDefaultDeviceName(),
         deviceType: detectDeviceType(),
@@ -50,28 +65,27 @@
     }
 
     function getSettings() {
+        const tabNodeId = getOrCreateTabNodeId();
         try {
             const raw = localStorage.getItem(SETTINGS_KEY);
             if (!raw) {
-                localStorage.setItem(SETTINGS_KEY, JSON.stringify(defaultSettings));
-                return { ...defaultSettings };
+                const initial = { ...defaultSettings, nodeId: tabNodeId };
+                localStorage.setItem(SETTINGS_KEY, JSON.stringify(initial));
+                return initial;
             }
             const parsed = JSON.parse(raw);
-            const merged = { ...defaultSettings, ...parsed };
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
-            return merged;
+            return { ...defaultSettings, ...parsed, nodeId: tabNodeId };
         } catch (_) {
-            return { ...defaultSettings };
+            return { ...defaultSettings, nodeId: tabNodeId };
         }
     }
 
     function saveSettings(newSettings) {
-        const merged = { ...getSettings(), ...newSettings };
+        const merged = { ...getSettings(), ...newSettings, nodeId: getOrCreateTabNodeId() };
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
         return merged;
     }
 
-    // Stores shared 6-digit PIN rooms so paired devices auto-discover when both are online
     function getPairedRooms() {
         try {
             const raw = localStorage.getItem(PAIRED_ROOMS_KEY);

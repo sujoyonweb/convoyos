@@ -1,4 +1,4 @@
-const CACHE_NAME = 'convoyos-offline-v0.0.6';
+const CACHE_NAME = 'convoyos-offline-v0.07';
 const OFFLINE_ASSETS = [
     './',
     './index.html',

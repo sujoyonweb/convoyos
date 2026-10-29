@@ -38,7 +38,7 @@
         const titles = {
             nearby: 'Nearby Devices',
             pair: 'Pair & Connect',
-            global: 'Global Link'
+            global: 'Global Direct Link'
         };
 
         tabs.forEach((t) => {
@@ -56,6 +56,8 @@
 
         if (tabName === 'pair') {
             window.convoyDiscovery.renderPairTabQR();
+        } else if (tabName === 'global') {
+            window.convoyDiscovery.renderGlobalShareTab();
         }
     }
 
@@ -90,6 +92,7 @@
 
         applySettingsToHeader();
         window.convoyDiscovery.renderPairTabQR();
+        window.convoyDiscovery.renderGlobalShareTab();
         window.convoyDiscovery.refreshPeers();
         closeSettingsModal();
         showToast('Preferences saved', 'success');
