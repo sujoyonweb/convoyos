@@ -1,5 +1,9 @@
 /**
- * convoyOS v0.0.1 - Real Cross-Device Discovery, WebSocket MQTT Signaling & QR Pairing
+ * convoyOS v0.0.1 - Bulletproof Cross-Device Discovery & Signaling Engine
+ * Fixes:
+ * - Eliminates BroadcastChannel DataCloneError on WebRTC SDP/ICE objects
+ * - Prioritizes wsClient.send() before localBroadcast
+ * - Automatically triggers background WebRTC pre-warming when a peer is discovered
  */
 (function () {
     const BROKER_URLS = [
@@ -7,44 +11,77 @@
         'wss://broker.hivemq.com:8884/mqtt'
     ];
     const HEARTBEAT_MS = 3500;
-    const PEER_TIMEOUT_MS = 10000;
+    const PEER_TIMEOUT_MS = 20000;
+    const ACK_COOLDOWN_MS = 2500;
 
     let brokerIndex = 0;
     let wsClient = null;
     let wsConnected = false;
+    let rxBuffer = new Uint8Array(0);
+
     let localBroadcast = null;
-    let livePeers = new Map(); // peerId -> peerInfo
+    let livePeers = new Map();        // peerId -> peerInfo
+    let lastAckSent = new Map();      // peerId -> timestamp
     const seenMsgIds = new Set();
 
-    let ipRoomTopic = 'convoyos/v2/lan/default';
+    let ipRoomTopic = 'convoyos/v2/lan/global_default';
     let cameraStream = null;
     let scanLoopActive = false;
     let offlinePc = null;
 
     async function init() {
-        // 1. Render scannable Pair QR & 6-Digit PIN
         renderPairTabQR();
-
-        // 2. Check if opened via scanned QR link (#pair=123456)
         checkUrlForPairPin();
 
-        // 3. Same-browser multi-tab discovery
+        // 1. Same-browser multi-tab discovery
         if ('BroadcastChannel' in window) {
-            localBroadcast = new BroadcastChannel('convoyos_local_tabs_v2');
-            localBroadcast.onmessage = (e) => handleSignalingPayload(e.data, 'local-tab');
+            localBroadcast = new BroadcastChannel('convoyos_local_tabs_v4');
+            localBroadcast.onmessage = (e) => {
+                if (e.data?.isRawBinary) {
+                    const myId = window.convoyStorage.getSettings().nodeId;
+                    if (e.data.targetId === myId) {
+                        window.convoyTransfer.handleIncomingRawBinaryPacket(e.data.buffer);
+                    }
+                } else {
+                    handleSignalingPayload(e.data);
+                }
+            };
         }
 
-        // 4. Resolve shared IPv4 address so PC & Android on same Wi-Fi join the exact same room
-        await resolveSharedIpv4Room();
-
-        // 5. Connect to WebSocket MQTT signaling broker
+        // 2. Connect to WebSocket MQTT broker immediately
         connectMqttWebSocket();
 
-        // 6. Periodic heartbeat & dead-peer cleanup
+        // 3. Resolve shared router IPv4 via STUN + HTTP fallback
+        resolveSharedIpv4Room().then((resolvedTopic) => {
+            if (resolvedTopic && resolvedTopic !== ipRoomTopic) {
+                ipRoomTopic = resolvedTopic;
+                if (wsConnected) {
+                    subscribeTopic(ipRoomTopic);
+                    announcePresence(true);
+                }
+            }
+        });
+
+        // 4. Periodic heartbeat & stale-peer cleanup
         setInterval(() => {
-            announcePresence();
+            if (!wsConnected && navigator.onLine) {
+                connectMqttWebSocket();
+            }
+            announcePresence(false);
             pruneStalePeers();
         }, HEARTBEAT_MS);
+
+        // 5. Instant recovery when switching back to tab or waking phone screen
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                if (!wsConnected && navigator.onLine) connectMqttWebSocket();
+                announcePresence(true);
+            }
+        });
+
+        window.addEventListener('focus', () => {
+            announcePresence(true);
+        });
 
         window.addEventListener('beforeunload', () => {
             sendLeaveSignal();
@@ -53,37 +90,95 @@
         renderDeviceList();
     }
 
-    async function resolveSharedIpv4Room() {
+    // =========================================================================
+    // BRAVE-PROOF PUBLIC IPV4 DISCOVERY (STUN + HTTP FALLBACK)
+    // =========================================================================
+    function getPublicIpv4ViaStun() {
+        return new Promise((resolve) => {
+            try {
+                const pc = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+                let resolved = false;
+                const done = (ip) => {
+                    if (resolved) return;
+                    resolved = true;
+                    try { pc.close(); } catch (_) {}
+                    resolve(ip);
+                };
+
+                setTimeout(() => done(null), 1800);
+
+                pc.createDataChannel('stun_probe');
+                pc.onicecandidate = (e) => {
+                    if (!e.candidate || !e.candidate.candidate) return;
+                    const candStr = e.candidate.candidate;
+                    const match = candStr.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+\d+\s+typ\s+srflx/);
+                    if (match && match[1]) {
+                        done(match[1]);
+                    }
+                };
+                pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => done(null));
+            } catch (_) {
+                resolve(null);
+            }
+        });
+    }
+
+    async function getPublicIpViaHttp() {
         const endpoints = [
             'https://api.ipify.org?format=text',
             'https://ipv4.icanhazip.com',
             'https://1.1.1.1/cdn-cgi/trace'
         ];
-
         for (const url of endpoints) {
             try {
                 const ctrl = new AbortController();
-                const timer = setTimeout(() => ctrl.abort(), 2200);
+                const timer = setTimeout(() => ctrl.abort(), 1800);
                 const res = await fetch(url, { signal: ctrl.signal });
                 clearTimeout(timer);
                 const text = (await res.text()).trim();
-                const ipMatch = text.includes('ip=') ? text.match(/ip=([^\n\r]+)/)?.[1] : text;
-                if (ipMatch) {
-                    const cleanIp = ipMatch.trim();
-                    let hash = 5381;
-                    for (let i = 0; i < cleanIp.length; i++) {
-                        hash = (hash * 33) ^ cleanIp.charCodeAt(i);
-                    }
-                    ipRoomTopic = `convoyos/v2/lan/${(hash >>> 0).toString(16)}`;
-                    return;
-                }
+                const rawIp = text.includes('ip=') ? text.match(/ip=([^\n\r]+)/)?.[1] : text;
+                if (rawIp) return rawIp.trim();
             } catch (_) {}
         }
+        return null;
+    }
+
+    function normalizeIpForRoomHash(ipStr) {
+        if (!ipStr) return null;
+        if (ipStr.includes(':')) {
+            return ipStr.split(':').slice(0, 4).join(':').toLowerCase();
+        }
+        return ipStr;
+    }
+
+    async function resolveSharedIpv4Room() {
+        let ip = await getPublicIpv4ViaStun();
+        if (!ip) {
+            ip = await getPublicIpViaHttp();
+        }
+        const normalized = normalizeIpForRoomHash(ip);
+        if (!normalized) return ipRoomTopic;
+
+        let hash = 5381;
+        for (let i = 0; i < normalized.length; i++) {
+            hash = (hash * 33) ^ normalized.charCodeAt(i);
+        }
+        return `convoyos/v2/lan/${(hash >>> 0).toString(16)}`;
     }
 
     // =========================================================================
-    // ZERO-DEPENDENCY MQTT v3.1.1 OVER WEBSOCKETS
+    // ZERO-DEPENDENCY MQTT v3.1.1 (JSON + RAW BINARY STREAMING)
     // =========================================================================
+    function appendBytes(a, b) {
+        if (a.length === 0) return b;
+        const out = new Uint8Array(a.length + b.length);
+        out.set(a, 0);
+        out.set(b, a.length);
+        return out;
+    }
+
     function encodeRemainingLength(len) {
         const bytes = [];
         do {
@@ -102,10 +197,10 @@
 
     function buildMqttConnectPacket(clientId) {
         const body = [
-            0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, // 'MQTT'
-            0x04,                               // Protocol level 4 (v3.1.1)
-            0x02,                               // Clean session
-            0x00, 0x3c,                         // Keep-alive 60s
+            0x00, 0x04, 0x4d, 0x51, 0x54, 0x54,
+            0x04,
+            0x02,
+            0x00, 0x3c,
             ...encodeUtf8Prefixed(clientId)
         ];
         return new Uint8Array([0x10, ...encodeRemainingLength(body.length), ...body]);
@@ -121,19 +216,18 @@
         return new Uint8Array([0x82, ...encodeRemainingLength(body.length), ...body]);
     }
 
-    function buildMqttPublishPacket(topic, jsonString) {
+    function buildMqttPublishBytesPacket(topic, payloadUint8) {
         const topicBytes = encodeUtf8Prefixed(topic);
-        const payloadBytes = new TextEncoder().encode(jsonString);
-        const remLen = topicBytes.length + payloadBytes.length;
+        const remLen = topicBytes.length + payloadUint8.byteLength;
         const remBytes = encodeRemainingLength(remLen);
         const pkt = new Uint8Array(1 + remBytes.length + remLen);
 
         let offset = 0;
-        pkt[offset++] = 0x30; // PUBLISH QoS 0
+        pkt[offset++] = 0x30;
         for (const b of remBytes) pkt[offset++] = b;
         pkt.set(topicBytes, offset);
         offset += topicBytes.length;
-        pkt.set(payloadBytes, offset);
+        pkt.set(payloadUint8, offset);
         return pkt;
     }
 
@@ -142,9 +236,13 @@
             window.convoyApp?.setNetworkBadge(false, 'Offline Mode');
             return;
         }
+        if (wsClient && (wsClient.readyState === WebSocket.OPEN || wsClient.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
 
         const url = BROKER_URLS[brokerIndex % BROKER_URLS.length];
         try {
+            rxBuffer = new Uint8Array(0);
             wsClient = new WebSocket(url, 'mqtt');
             wsClient.binaryType = 'arraybuffer';
 
@@ -155,54 +253,65 @@
             };
 
             wsClient.onmessage = (event) => {
-                const buf = new Uint8Array(event.data);
-                let offset = 0;
+                rxBuffer = appendBytes(rxBuffer, new Uint8Array(event.data));
 
-                // Loop through all MQTT frames in the WebSocket buffer
-                while (offset < buf.length) {
-                    const headerByte = buf[offset++];
+                while (rxBuffer.length >= 2) {
+                    const headerByte = rxBuffer[0];
                     const packetType = headerByte >> 4;
 
+                    let offset = 1;
                     let mult = 1;
                     let remLen = 0;
                     let encodedByte;
+                    let headerComplete = false;
+
                     do {
-                        if (offset >= buf.length) return;
-                        encodedByte = buf[offset++];
+                        if (offset >= rxBuffer.length) break;
+                        encodedByte = rxBuffer[offset++];
                         remLen += (encodedByte & 127) * mult;
                         mult *= 128;
-                    } while ((encodedByte & 128) !== 0);
+                        if ((encodedByte & 128) === 0) {
+                            headerComplete = true;
+                            break;
+                        }
+                    } while (offset < 5);
+
+                    if (!headerComplete) break;
 
                     const packetEnd = offset + remLen;
-                    if (packetEnd > buf.length) break;
+                    if (packetEnd > rxBuffer.length) break;
 
                     if (packetType === 2) {
-                        // CONNACK
                         wsConnected = true;
                         window.convoyApp?.setNetworkBadge(true, 'Live Ready');
                         subscribeAllRooms();
-                        announcePresence();
+                        setTimeout(() => announcePresence(true), 100);
                     } else if (packetType === 3) {
-                        // PUBLISH
-                        const topicLen = (buf[offset] << 8) | buf[offset + 1];
-                        const topicStr = new TextDecoder().decode(buf.slice(offset + 2, offset + 2 + topicLen));
+                        const topicLen = (rxBuffer[offset] << 8) | rxBuffer[offset + 1];
+                        const topicStr = new TextDecoder().decode(rxBuffer.slice(offset + 2, offset + 2 + topicLen));
                         const payloadStart = offset + 2 + topicLen;
-                        const payloadBytes = buf.slice(payloadStart, packetEnd);
-                        try {
-                            const jsonStr = new TextDecoder().decode(payloadBytes);
-                            const data = JSON.parse(jsonStr);
-                            handleSignalingPayload(data, topicStr);
-                        } catch (_) {}
+                        const payloadSlice = rxBuffer.slice(payloadStart, packetEnd);
+
+                        if (topicStr.startsWith('convoyos/v2/bin/')) {
+                            window.convoyTransfer.handleIncomingRawBinaryPacket(payloadSlice.buffer);
+                        } else {
+                            try {
+                                const jsonStr = new TextDecoder().decode(payloadSlice);
+                                const data = JSON.parse(jsonStr);
+                                handleSignalingPayload(data);
+                            } catch (_) {}
+                        }
                     }
 
-                    offset = packetEnd;
+                    rxBuffer = rxBuffer.slice(packetEnd);
                 }
             };
 
             wsClient.onclose = () => {
                 wsConnected = false;
+                rxBuffer = new Uint8Array(0);
                 brokerIndex++;
-                setTimeout(connectMqttWebSocket, 3000);
+                setTimeout(connectMqttWebSocket, 2000);
             };
 
             wsClient.onerror = () => {
@@ -221,30 +330,60 @@
         const s = window.convoyStorage.getSettings();
         const topics = new Set([
             ipRoomTopic,
+            'convoyos/v2/lan/global_default',
             `convoyos/v2/node/${s.nodeId}`,
+            `convoyos/v2/bin/${s.nodeId}`,
             `convoyos/v2/pin/${s.pairPin}`,
             ...window.convoyStorage.getPairedRooms().map((pin) => `convoyos/v2/pin/${pin}`)
         ]);
 
-        let delay = 0;
-        topics.forEach((t) => {
-            setTimeout(() => subscribeTopic(t), delay);
-            delay += 60;
-        });
+        topics.forEach((t) => subscribeTopic(t));
     }
 
+    // CRITICAL FIX: Send over WebSocket FIRST, and pass a plain JSON clone to BroadcastChannel
+    // so native RTCSessionDescription / RTCIceCandidate objects NEVER throw DataCloneError!
     function publishSignaling(topic, payloadObj) {
-        const json = JSON.stringify(payloadObj);
-        if (localBroadcast) {
-            localBroadcast.postMessage(payloadObj);
-        }
+        try {
+            const jsonStr = JSON.stringify(payloadObj);
+            const jsonBytes = new TextEncoder().encode(jsonStr);
+
+            if (wsClient && wsConnected && wsClient.readyState === WebSocket.OPEN) {
+                wsClient.send(buildMqttPublishBytesPacket(topic, jsonBytes));
+            }
+
+            if (localBroadcast) {
+                try {
+                    localBroadcast.postMessage(JSON.parse(jsonStr));
+                } catch (_) {}
+            }
+        } catch (_) {}
+    }
+
+    function sendBinaryChunk(targetNodeId, arrayBuffer) {
         if (wsClient && wsConnected && wsClient.readyState === WebSocket.OPEN) {
-            wsClient.send(buildMqttPublishPacket(topic, json));
+            const u8 = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
+            wsClient.send(buildMqttPublishBytesPacket(`convoyos/v2/bin/${targetNodeId}`, u8));
         }
+        if (localBroadcast) {
+            try {
+                localBroadcast.postMessage({
+                    isRawBinary: true,
+                    targetId: targetNodeId,
+                    buffer: arrayBuffer
+                });
+            } catch (_) {}
+        }
+    }
+
+    function getBufferedAmount() {
+        if (wsClient && wsConnected && wsClient.readyState === WebSocket.OPEN) {
+            return wsClient.bufferedAmount || 0;
+        }
+        return 0;
     }
 
     // =========================================================================
-    // LIVE PRESENCE, DIRECT SIGNAL ROUTING & PEER PRUNING
+    // LIVE PRESENCE, DETERMINISTIC SIGNALING & PEER PRUNING
     // =========================================================================
     function buildSelfPeerDescriptor(isPairedChannel = false) {
         const s = window.convoyStorage.getSettings();
@@ -258,27 +397,32 @@
         };
     }
 
-    function announcePresence() {
+    function announcePresence(isScanRequest = false) {
         const s = window.convoyStorage.getSettings();
-        publishSignaling(ipRoomTopic, {
+        const lanPacket = {
             type: 'HEARTBEAT',
+            scanRequest: Boolean(isScanRequest),
             peer: buildSelfPeerDescriptor(false)
-        });
+        };
 
-        publishSignaling(`convoyos/v2/pin/${s.pairPin}`, {
+        publishSignaling(ipRoomTopic, lanPacket);
+        if (ipRoomTopic !== 'convoyos/v2/lan/global_default') {
+            publishSignaling('convoyos/v2/lan/global_default', lanPacket);
+        }
+
+        const pairedPacket = {
             type: 'HEARTBEAT',
+            scanRequest: Boolean(isScanRequest),
             peer: buildSelfPeerDescriptor(true)
-        });
+        };
+        publishSignaling(`convoyos/v2/pin/${s.pairPin}`, pairedPacket);
 
         window.convoyStorage.getPairedRooms().forEach((pin) => {
-            publishSignaling(`convoyos/v2/pin/${pin}`, {
-                type: 'HEARTBEAT',
-                peer: buildSelfPeerDescriptor(true)
-            });
+            publishSignaling(`convoyos/v2/pin/${pin}`, pairedPacket);
         });
 
         if (wsClient && wsConnected && wsClient.readyState === WebSocket.OPEN) {
-            wsClient.send(new Uint8Array([0xc0, 0x00])); // MQTT PINGREQ
+            wsClient.send(new Uint8Array([0xc0, 0x00]));
         }
     }
 
@@ -292,49 +436,55 @@
     }
 
     function sendDirectSignal(targetNodeId, payload) {
-        const s = window.convoyStorage.getSettings();
         const packet = {
             ...payload,
             targetId: targetNodeId,
+            peer: buildSelfPeerDescriptor(false),
             msgId: 'M-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
         };
 
-        const targetPeer = livePeers.get(targetNodeId);
-        const targetTopics = new Set([
-            ipRoomTopic,
-            `convoyos/v2/node/${targetNodeId}`,
-            `convoyos/v2/pin/${s.pairPin}`
-        ]);
-
-        // Route over the exact topic where the peer was discovered + its PIN room
-        if (targetPeer) {
-            if (targetPeer.originTopic && targetPeer.originTopic !== 'local-tab') {
-                targetTopics.add(targetPeer.originTopic);
-            }
-            if (targetPeer.pin) {
-                targetTopics.add(`convoyos/v2/pin/${targetPeer.pin}`);
-            }
-        }
-        window.convoyStorage.getPairedRooms().forEach((pin) => {
-            targetTopics.add(`convoyos/v2/pin/${pin}`);
-        });
-
-        // For high-frequency WS_CHUNK packets, use the peer's primary verified topic to avoid flooding
-        if (payload.ctrl === 'WS_CHUNK' && targetPeer?.originTopic && targetPeer.originTopic !== 'local-tab') {
-            publishSignaling(targetPeer.originTopic, packet);
-            return;
-        }
-
-        targetTopics.forEach((topic) => publishSignaling(topic, packet));
+        // Route directly to target's personal inbox
+        publishSignaling(`convoyos/v2/node/${targetNodeId}`, packet);
     }
 
-    function handleSignalingPayload(data, sourceTopic) {
+    function registerOrRefreshPeer(peerObj, forcePaired = false) {
+        if (!peerObj || !peerObj.id) return false;
+        const s = window.convoyStorage.getSettings();
+        if (peerObj.id === s.nodeId) return false;
+
+        const isNew = !livePeers.has(peerObj.id);
+        const existing = livePeers.get(peerObj.id);
+        const savedPins = window.convoyStorage.getPairedRooms();
+        const isPaired =
+            forcePaired ||
+            Boolean(peerObj.paired) ||
+            Boolean(existing?.paired) ||
+            savedPins.includes(String(peerObj.pin));
+
+        const updatedPeer = {
+            ...peerObj,
+            paired: isPaired,
+            lastSeen: Date.now()
+        };
+        livePeers.set(peerObj.id, updatedPeer);
+
+        if (isNew) {
+            renderDeviceList();
+            // Pre-warm direct WebRTC DataChannel in the background so it is open before the user even clicks!
+            if (window.convoyTransfer?.prewarmPeerConnection) {
+                window.convoyTransfer.prewarmPeerConnection(updatedPeer);
+            }
+        }
+        return isNew;
+    }
+
+    function handleSignalingPayload(data) {
         if (!data) return;
 
         if (data.msgId) {
             if (seenMsgIds.has(data.msgId)) return;
             seenMsgIds.add(data.msgId);
-            if (seenMsgIds.size > 500) {
+            if (seenMsgIds.size > 800) {
                 const oldest = seenMsgIds.values().next().value;
                 seenMsgIds.delete(oldest);
             }
@@ -342,45 +492,27 @@
 
         const s = window.convoyStorage.getSettings();
 
+        if (data.peer && data.peer.id && data.peer.id !== s.nodeId) {
+            registerOrRefreshPeer(data.peer);
+        }
+
         if (data.type === 'HEARTBEAT' && data.peer && data.peer.id !== s.nodeId) {
             const incoming = data.peer;
-            const isNew = !livePeers.has(incoming.id);
-            const savedPins = window.convoyStorage.getPairedRooms();
-            const isPaired = incoming.paired || savedPins.includes(String(incoming.pin));
-
-            livePeers.set(incoming.id, {
-                ...incoming,
-                paired: isPaired,
-                originTopic: sourceTopic,
-                lastSeen: Date.now()
-            });
-
-            if (isNew) {
-                renderDeviceList();
+            const lastAck = lastAckSent.get(incoming.id) || 0;
+            if (data.scanRequest || (Date.now() - lastAck > ACK_COOLDOWN_MS)) {
+                lastAckSent.set(incoming.id, Date.now());
                 sendDirectSignal(incoming.id, {
                     type: 'HEARTBEAT_ACK',
-                    peer: buildSelfPeerDescriptor(isPaired)
+                    peer: buildSelfPeerDescriptor(incoming.paired)
                 });
             }
         } else if (data.type === 'HEARTBEAT_ACK' && data.peer && data.peer.id !== s.nodeId) {
-            const incoming = data.peer;
-            const isNew = !livePeers.has(incoming.id);
-            livePeers.set(incoming.id, {
-                ...incoming,
-                originTopic: sourceTopic,
-                lastSeen: Date.now()
-            });
-            if (isNew) renderDeviceList();
+            registerOrRefreshPeer(data.peer);
         } else if (data.type === 'LEAVE' && data.peerId) {
             if (livePeers.delete(data.peerId)) renderDeviceList();
         } else if (data.type === 'PAIR_CONFIRM' && data.peer && data.peer.id !== s.nodeId) {
             window.convoyStorage.addPairedRoom(data.pin);
-            livePeers.set(data.peer.id, {
-                ...data.peer,
-                paired: true,
-                originTopic: sourceTopic,
-                lastSeen: Date.now()
-            });
+            registerOrRefreshPeer(data.peer, true);
             renderDeviceList();
             window.convoyApp.switchHubTab('nearby');
             window.convoyApp.showToast(`Paired with ${data.peer.name}!`, 'success');
@@ -395,6 +527,10 @@
         const now = Date.now();
         let removedAny = false;
         livePeers.forEach((peer, id) => {
+            if (window.convoyTransfer?.isPeerActive && window.convoyTransfer.isPeerActive(id)) {
+                peer.lastSeen = now;
+                return;
+            }
             if (now - peer.lastSeen > PEER_TIMEOUT_MS) {
                 livePeers.delete(id);
                 removedAny = true;
@@ -474,13 +610,16 @@
     function refreshPeers() {
         const icon = document.getElementById('refreshIcon');
         if (icon) icon.classList.add('spin-anim');
-        announcePresence();
+        if (!wsConnected && navigator.onLine) {
+            connectMqttWebSocket();
+        }
+        announcePresence(true);
         setTimeout(() => {
             if (icon) icon.classList.remove('spin-anim');
             pruneStalePeers();
             renderDeviceList();
             window.convoyApp.showToast(`Active devices online: ${livePeers.size}`, 'info');
-        }, 600);
+        }, 500);
     }
 
     // =========================================================================
@@ -523,7 +662,7 @@
             peer: buildSelfPeerDescriptor(true)
         });
 
-        announcePresence();
+        announcePresence(true);
         if (input) input.value = '';
         window.convoyApp.switchHubTab('nearby');
         window.convoyApp.showToast(`Joined PIN room ${rawPin}! Discovering peer...`, 'success');
@@ -614,7 +753,10 @@
 
             offlinePc.onicecandidate = (e) => {
                 if (!e.candidate && offlinePc.localDescription) {
-                    const encoded = btoa(JSON.stringify(offlinePc.localDescription));
+                    const encoded = btoa(JSON.stringify({
+                        type: offlinePc.localDescription.type,
+                        sdp: offlinePc.localDescription.sdp
+                    }));
                     if (tokenInput) tokenInput.value = encoded;
                     window.convoyQR.renderInto('offlineHandshakeQr', encoded.slice(0, 110), '#0c0c0c');
                 }
@@ -654,7 +796,10 @@
                 };
                 offlinePc.onicecandidate = (e) => {
                     if (!e.candidate && offlinePc.localDescription) {
-                        const ansToken = btoa(JSON.stringify(offlinePc.localDescription));
+                        const ansToken = btoa(JSON.stringify({
+                            type: offlinePc.localDescription.type,
+                            sdp: offlinePc.localDescription.sdp
+                        }));
                         if (localEl) localEl.value = ansToken;
                         if (stepLabel) {
                             stepLabel.textContent = 'Step 2: Copy this Answer token back to the first device!';
@@ -684,6 +829,7 @@
 
     window.convoyDiscovery = {
         init,
+        announcePresence,
         refreshPeers,
         renderDeviceList,
         renderPairTabQR,
@@ -691,6 +837,8 @@
         startCameraScanner,
         stopCameraScanner,
         sendDirectSignal,
+        sendBinaryChunk,
+        getBufferedAmount,
         openOfflineHandshakeModal,
         closeOfflineHandshakeModal,
         copyOfflineToken,
