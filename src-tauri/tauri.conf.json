@@ -9,7 +9,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "convoyOS — Fast, Local & P2P File Sharing",
+        "title": "convoyOS — Fast Local & P2P File Sharing",
         "width": 1280,
         "height": 800,
         "minWidth": 360,
