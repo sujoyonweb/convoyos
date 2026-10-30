@@ -1,17 +1,21 @@
 /**
- * convoyOS v0.0.1 - High-Speed Direct WebRTC Batch Streaming Engine
- * Fixes:
- * 1. Serializes RTCSessionDescription & RTCIceCandidate to plain JSON (fixes DataCloneError)
- * 2. Background WebRTC Pre-Warming on peer discovery (DataChannel is open BEFORE clicking Send)
- * 3. Zero-copy Uint8Array chunk views + 4 MB background disk prefetching (20-100+ MB/s on LAN)
- * 4. Kernel SCTP buffer + receiver PROGRESS_ACK lockstep progress bar synchronization
+ * convoyOS v0.0.1 - Phase 1 + Phase 2 Multi-Channel Striped WebRTC, Large-File & Instant Text Engine
  */
 (function () {
-    const WEBRTC_CHUNK_SIZE = 65536;        // 64 KB WebRTC SCTP binary chunk
-    const MACRO_READ_SIZE = 4194304;        // 4 MB disk read batch for zero I/O starvation
-    const WEBRTC_MAX_BUFFER = 8388608;      // 8 MB WebRTC high-water mark for high-bandwidth Wi-Fi
-    const WEBRTC_LOW_BUFFER = 2097152;      // 2 MB WebRTC low-water refill trigger
-    const ACK_INTERVAL_BYTES = 262144;      // Receiver sends PROGRESS_ACK every 256 KB
+    const WEBRTC_CHUNK_SIZE = 65536;            // 64 KB payload per chunk
+    const STRIPE_HEADER_SIZE = 8;               // 4-byte 'CVSP' magic + 4-byte Uint32 seq
+    const PARALLEL_STRIPE_COUNT = 4;            // 4 parallel RTCDataChannels per peer
+    const MACRO_READ_SIZE = 4194304;            // 4 MB disk prefetch batch
+    const WEBRTC_MAX_BUFFER = 4194304;          // 4 MB high-water mark per channel
+    const WEBRTC_LOW_BUFFER = 1048576;          // 1 MB low-water refill trigger per channel
+    const RAM_COMPACT_THRESHOLD = 33554432;     // Compact RAM chunks into disk-paged Blob every 32 MB
+    const ACK_INTERVAL_BYTES = 262144;          // Receiver sends PROGRESS_ACK every 256 KB
+    const DEFAULT_DOC_TITLE = document.title || 'convoyOS — Fast Local & P2P File Sharing';
+
+    const MAGIC_B0 = 0x43;
+    const MAGIC_B1 = 0x56;
+    const MAGIC_B2 = 0x53;
+    const MAGIC_B3 = 0x50;
 
     const ICE_CONFIG = {
         iceServers: [
@@ -21,19 +25,37 @@
         ]
     };
 
-    let peerConnections = new Map();        // peerId -> RTCPeerConnection
-    let peerSessionIds = new Map();         // peerId -> sessionId
-    let dataChannels = new Map();           // peerId -> RTCDataChannel
-    let pendingIceBySession = new Map();    // sessionId -> plain candidate objects[]
-    let signalQueue = Promise.resolve();    // Serializes async WebRTC SDP/ICE operations
+    let peerConnections = new Map();
+    let peerSessionIds = new Map();
+    let dataChannels = new Map();
+    let stripeChannels = new Map();
+    let pendingIceBySession = new Map();
+    let signalQueue = Promise.resolve();
 
     let outgoingState = null;
     let incomingState = null;
     let uiUpdateTimer = null;
     let offerRetryTimer = null;
     let webrtcWatchdogTimer = null;
+    let reconnectTimer = null;
+    let activeWakeLock = null;
+    let lastReceivedTextSnippet = { text: '', fileName: 'clipboard.txt', senderName: 'Peer' };
 
-    function init() {}
+    function init() {
+        window.addEventListener('beforeunload', (e) => {
+            if (outgoingState || incomingState) {
+                e.preventDefault();
+                e.returnValue = 'A file transfer is currently in progress.';
+                return e.returnValue;
+            }
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && (outgoingState || incomingState)) {
+                requestScreenWakeLock();
+            }
+        });
+    }
 
     function isPeerActive(peerId) {
         const dc = dataChannels.get(peerId);
@@ -43,7 +65,58 @@
         return false;
     }
 
-    // Plain JSON serializers so BroadcastChannel/WebSocket never throw DataCloneError
+    // =========================================================================
+    // SAFEGUARDS: WAKE LOCK, DISK SPACE CHECK, HAPTICS & TAB TITLE
+    // =========================================================================
+    async function requestScreenWakeLock() {
+        if (!('wakeLock' in navigator)) return;
+        try {
+            if (activeWakeLock) return;
+            activeWakeLock = await navigator.wakeLock.request('screen');
+            activeWakeLock.addEventListener('release', () => {
+                activeWakeLock = null;
+            });
+        } catch (_) {}
+    }
+
+    async function releaseScreenWakeLock() {
+        if (!activeWakeLock) return;
+        try {
+            await activeWakeLock.release();
+        } catch (_) {}
+        activeWakeLock = null;
+    }
+
+    function triggerHapticPing(pattern = 40) {
+        try {
+            if (navigator.vibrate) navigator.vibrate(pattern);
+        } catch (_) {}
+    }
+
+    function setTabTitleProgress(text) {
+        document.title = text ? `${text} • convoyOS` : DEFAULT_DOC_TITLE;
+    }
+
+    async function checkAvailableDiskSpace(requiredBytes) {
+        if (!navigator.storage || !navigator.storage.estimate) return true;
+        try {
+            const estimate = await navigator.storage.estimate();
+            if (estimate && typeof estimate.quota === 'number' && typeof estimate.usage === 'number') {
+                const freeBytes = estimate.quota - estimate.usage;
+                if (freeBytes > 0 && requiredBytes > freeBytes) {
+                    const freeStr = window.convoyDragDrop.formatBytes(freeBytes);
+                    const reqStr = window.convoyDragDrop.formatBytes(requiredBytes);
+                    window.convoyApp.showToast(
+                        `Warning: Only ${freeStr} browser storage free for ${reqStr} transfer`,
+                        'error'
+                    );
+                    return false;
+                }
+            }
+        } catch (_) {}
+        return true;
+    }
+
     function serializeSdp(desc) {
         if (!desc) return null;
         return { type: desc.type, sdp: desc.sdp };
@@ -60,12 +133,11 @@
     }
 
     // =========================================================================
-    // 1. BACKGROUND WEBRTC PRE-WARMING (Opens DataChannel Before User Clicks)
+    // 1. BACKGROUND WEBRTC PRE-WARMING
     // =========================================================================
     function prewarmPeerConnection(peer) {
         if (!peer || !peer.id) return;
         const myId = window.convoyStorage.getSettings().nodeId;
-        // Deterministic initiator: node with lexicographically smaller ID initiates background offer
         if (myId < peer.id) {
             const existingDc = dataChannels.get(peer.id);
             const existingPc = peerConnections.get(peer.id);
@@ -95,12 +167,14 @@
         }
 
         clearTimers();
+        requestScreenWakeLock();
 
         const manifest = files.map((f, idx) => ({
             index: idx,
             name: f.relativePath || f.name,
             size: f.size,
-            type: f.type || 'application/octet-stream'
+            type: f.type || 'application/octet-stream',
+            isTextSnippet: Boolean(f.isTextSnippet)
         }));
         const totalBatchBytes = manifest.reduce((sum, item) => sum + item.size, 0);
         const batchTitle = files.length === 1
@@ -115,15 +189,18 @@
             fileIndex: 0,
             currentFile: files[0],
             fileByteOffset: resumeOffset,
+            chunkSeq: Math.floor(resumeOffset / WEBRTC_CHUNK_SIZE),
             completedFilesBytes: 0,
             confirmedBatchBytes: resumeOffset,
             totalBatchBytes,
             startTime: performance.now(),
-            speedSamples: [{ time: performance.now(), bytes: resumeOffset }],
+            firstByteTime: null,
+            speedSamples: [],
             paused: false,
             accepted: false,
             pumping: false,
             waitingForNextFileAck: false,
+            reconnecting: false,
             prefetchedMacro: null,
             transportLabel: 'WebRTC Direct'
         };
@@ -135,7 +212,6 @@
             totalBatchBytes
         );
 
-        // Ensure WebRTC connection is open or connecting right now
         const existingDc = dataChannels.get(peer.id);
         const existingPc = peerConnections.get(peer.id);
         const isHealthy =
@@ -149,20 +225,22 @@
             startWebRtcConnection(peer);
         }
 
-        // Prefetch the first 4 MB block into RAM while waiting for user to tap Accept
         prefetchNextMacroBlock(files[0], resumeOffset);
 
+        const mySettings = window.convoyStorage.getSettings();
         const offerPacket = {
             type: 'TRANSFER_CTRL',
             ctrl: 'BATCH_OFFER',
             batchId: outgoingState.batchId,
-            sender: window.convoyStorage.getSettings(),
+            sender: {
+                ...mySettings,
+                paired: Boolean(peer.paired)
+            },
             manifest,
             totalBatchBytes,
             startByteOffset: resumeOffset
         };
 
-        // If DataChannel is already open, send BATCH_OFFER directly over WebRTC + signaling
         if (existingDc && existingDc.readyState === 'open') {
             try {
                 existingDc.send(JSON.stringify({ dcCtrl: 'BATCH_OFFER_DIRECT', packet: offerPacket }));
@@ -191,13 +269,14 @@
     }
 
     // =========================================================================
-    // 3. STRICTLY ORDERED WEBRTC SIGNALING (Plain JSON, Zero DataCloneError)
+    // 3. 4-CHANNEL PARALLEL WEBRTC SIGNALING & AUTO-RECONNECT
     // =========================================================================
     async function startWebRtcConnection(peer) {
         try {
             if (peerConnections.has(peer.id)) {
                 try { peerConnections.get(peer.id).close(); } catch (_) {}
             }
+            stripeChannels.set(peer.id, []);
 
             const sessionId = 'W-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
             peerSessionIds.set(peer.id, sessionId);
@@ -205,6 +284,12 @@
 
             const pc = new RTCPeerConnection(ICE_CONFIG);
             peerConnections.set(peer.id, pc);
+
+            pc.onconnectionstatechange = () => {
+                if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+                    handleMidTransferNetworkBlip(peer);
+                }
+            };
 
             let offerDispatched = false;
             const localCandidateBuffer = [];
@@ -224,13 +309,17 @@
                 }
             };
 
-            const dc = pc.createDataChannel('convoy_fast_stream', { ordered: true });
-            setupDataChannel(peer, dc);
+            const primaryDc = pc.createDataChannel('convoy_fast_stream', { ordered: true });
+            setupDataChannel(peer, primaryDc, true);
+
+            for (let i = 1; i < PARALLEL_STRIPE_COUNT; i++) {
+                const stripeDc = pc.createDataChannel(`convoy_stripe_${i}`, { ordered: true });
+                setupDataChannel(peer, stripeDc, false);
+            }
 
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
-            // 1. Send plain-JSON SDP Offer FIRST
             window.convoyDiscovery.sendDirectSignal(peer.id, {
                 type: 'WEBRTC_SIGNAL',
                 sessionId,
@@ -238,7 +327,6 @@
                 signal: { type: 'sdp', sdp: serializeSdp(pc.localDescription) }
             });
 
-            // 2. Flush any local LAN candidates gathered during setLocalDescription
             offerDispatched = true;
             while (localCandidateBuffer.length > 0) {
                 const cand = localCandidateBuffer.shift();
@@ -250,6 +338,21 @@
                 });
             }
         } catch (_) {}
+    }
+
+    function handleMidTransferNetworkBlip(peer) {
+        if (!outgoingState || outgoingState.paused || outgoingState.peer.id !== peer.id) return;
+        if (outgoingState.reconnecting) return;
+
+        outgoingState.reconnecting = true;
+        outgoingState.pumping = false;
+        outgoingState.transportLabel = 'Reconnecting Wi-Fi...';
+
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => {
+            if (!outgoingState) return;
+            startWebRtcConnection(peer);
+        }, 900);
     }
 
     function handleIncomingWebRtcSignal(packet) {
@@ -270,6 +373,7 @@
                 if (peerConnections.has(peerId)) {
                     try { peerConnections.get(peerId).close(); } catch (_) {}
                 }
+                stripeChannels.set(peerId, []);
 
                 peerSessionIds.set(peerId, sessionId);
                 if (!pendingIceBySession.has(sessionId)) {
@@ -298,7 +402,8 @@
                 };
 
                 pc.ondatachannel = (e) => {
-                    setupDataChannel({ id: peerId, name: sender.deviceName }, e.channel);
+                    const isPrimary = e.channel.label === 'convoy_fast_stream';
+                    setupDataChannel({ id: peerId, name: sender.deviceName }, e.channel, isPrimary);
                 };
 
                 await pc.setRemoteDescription(new RTCSessionDescription(sig.sdp));
@@ -307,7 +412,6 @@
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
 
-                // 1. Send plain-JSON SDP Answer FIRST
                 window.convoyDiscovery.sendDirectSignal(peerId, {
                     type: 'WEBRTC_SIGNAL',
                     sessionId,
@@ -315,7 +419,6 @@
                     signal: { type: 'sdp', sdp: serializeSdp(pc.localDescription) }
                 });
 
-                // 2. Flush local LAN candidates gathered during setLocalDescription(answer)
                 answerDispatched = true;
                 while (localAnswerCandidates.length > 0) {
                     const cand = localAnswerCandidates.shift();
@@ -357,18 +460,54 @@
         }
     }
 
-    function setupDataChannel(peer, dc) {
+    function setupDataChannel(peer, dc, isPrimary = true) {
         dc.binaryType = 'arraybuffer';
         dc.bufferedAmountLowThreshold = WEBRTC_LOW_BUFFER;
-        dataChannels.set(peer.id, dc);
+
+        if (isPrimary) {
+            dataChannels.set(peer.id, dc);
+        }
 
         dc.onopen = () => {
-            if (webrtcWatchdogTimer) clearTimeout(webrtcWatchdogTimer);
-            if (outgoingState && outgoingState.peer.id === peer.id && outgoingState.accepted && !outgoingState.pumping) {
-                outgoingState.transportLabel = 'WebRTC Direct';
-                outgoingState.startTime = performance.now();
-                outgoingState.speedSamples = [{ time: performance.now(), bytes: outgoingState.confirmedBatchBytes }];
-                beginCurrentFileTransfer();
+            if (!stripeChannels.has(peer.id)) {
+                stripeChannels.set(peer.id, []);
+            }
+            const pool = stripeChannels.get(peer.id);
+            if (!pool.includes(dc)) {
+                pool.push(dc);
+            }
+
+            if (isPrimary) {
+                if (webrtcWatchdogTimer) clearTimeout(webrtcWatchdogTimer);
+                if (outgoingState && outgoingState.peer.id === peer.id && outgoingState.accepted) {
+                    if (outgoingState.reconnecting) {
+                        outgoingState.reconnecting = false;
+                        outgoingState.transportLabel = 'WebRTC Direct';
+                        sendBatchControlFrame(peer.id, {
+                            dcCtrl: 'REQUEST_RESUME_OFFSET',
+                            fileIndex: outgoingState.fileIndex
+                        });
+                    } else if (!outgoingState.pumping) {
+                        outgoingState.transportLabel = 'WebRTC Direct';
+                        beginCurrentFileTransfer();
+                    }
+                }
+            } else if (outgoingState && outgoingState.peer.id === peer.id && outgoingState.accepted && !outgoingState.pumping && !outgoingState.waitingForNextFileAck) {
+                pumpWebRtcMacroChunks();
+            }
+        };
+
+        dc.onbufferedamountlow = () => {
+            if (outgoingState && !outgoingState.paused && !outgoingState.waitingForNextFileAck) {
+                pumpWebRtcMacroChunks();
+            }
+        };
+
+        dc.onclose = () => {
+            const pool = stripeChannels.get(peer.id);
+            if (pool) {
+                const idx = pool.indexOf(dc);
+                if (idx !== -1) pool.splice(idx, 1);
             }
         };
 
@@ -388,6 +527,35 @@
         };
     }
 
+    function getOpenChannelsForPeer(peerId) {
+        const pool = (stripeChannels.get(peerId) || []).filter((c) => c.readyState === 'open');
+        if (pool.length > 0) return pool;
+        const primary = dataChannels.get(peerId);
+        return primary && primary.readyState === 'open' ? [primary] : [];
+    }
+
+    function pickLowestBufferedChannel(channels) {
+        let best = channels[0];
+        let minBuf = best.bufferedAmount;
+        for (let i = 1; i < channels.length; i++) {
+            const ch = channels[i];
+            if (ch.bufferedAmount < minBuf) {
+                minBuf = ch.bufferedAmount;
+                best = ch;
+            }
+        }
+        return best;
+    }
+
+    function getTotalBufferedAmount(peerId) {
+        const channels = getOpenChannelsForPeer(peerId);
+        let sum = 0;
+        for (let i = 0; i < channels.length; i++) {
+            sum += channels[i].bufferedAmount || 0;
+        }
+        return sum;
+    }
+
     function attachOfflineDataChannel(pc, dc) {
         const offlinePeer = {
             id: 'OFFLINE-LAN-NODE',
@@ -397,14 +565,14 @@
             paired: true
         };
         peerConnections.set(offlinePeer.id, pc);
-        setupDataChannel(offlinePeer, dc);
+        setupDataChannel(offlinePeer, dc, true);
         dc.addEventListener('open', () => {
             window.convoyDiscovery.registerOfflinePeer(offlinePeer);
         });
     }
 
     // =========================================================================
-    // 4. BATCH SIGNALING & DIRECT WEBRTC EXECUTION
+    // 4. BATCH SIGNALING & PAIRED AUTO-ACCEPT
     // =========================================================================
     function handleSignalingTransferCtrl(msg) {
         const sender = msg.sender || {};
@@ -424,28 +592,51 @@
                 fileIndex: 0,
                 currentFileMeta: firstFile,
                 currentFileBytes: 0,
-                currentFileChunks: [],
+                nextExpectedSeq: 0,
+                reorderBuffer: new Map(),
+                ramChunks: [],
+                ramBufferedBytes: 0,
+                diskBlobSegments: [],
                 receivedBatchBytes: msg.startByteOffset || 0,
                 lastAckedBytes: 0,
                 totalBatchBytes: msg.totalBatchBytes || firstFile.size,
                 startTime: performance.now(),
-                speedSamples: [{ time: performance.now(), bytes: msg.startByteOffset || 0 }],
+                firstByteTime: null,
+                speedSamples: [],
                 transportLabel: 'WebRTC Direct'
             };
 
+            checkAvailableDiskSpace(incomingState.totalBatchBytes);
+            triggerHapticPing(40);
+
             const settings = window.convoyStorage.getSettings();
-            if (settings.autoAccept === 'all') {
+            const pairedRooms = window.convoyStorage.getPairedRooms();
+            const isSenderPaired =
+                Boolean(sender.paired) ||
+                (sender.pairPin && pairedRooms.includes(String(sender.pairPin)));
+
+            // Auto-accept if user selected 'all', OR 'paired' for a paired device, OR if it's a tiny clipboard text snippet from a paired peer
+            const shouldAutoAccept =
+                settings.autoAccept === 'all' ||
+                (settings.autoAccept === 'paired' && isSenderPaired);
+
+            if (shouldAutoAccept) {
                 acceptIncomingTransfer();
             } else {
+                setTabTitleProgress('Incoming File!');
                 const modal = document.getElementById('incomingModal');
                 const senderEl = document.getElementById('incomingSenderName');
                 const summaryEl = document.getElementById('incomingFileSummary');
                 if (senderEl) senderEl.textContent = `${incomingState.senderName} wants to send:`;
                 if (summaryEl) {
                     const sizeFormatted = window.convoyDragDrop.formatBytes(incomingState.totalBatchBytes);
-                    summaryEl.textContent = manifest.length === 1
-                        ? `${firstFile.name} (${sizeFormatted})`
-                        : `${manifest.length} files (${sizeFormatted} total) • ${firstFile.name} + ${manifest.length - 1} more`;
+                    if (manifest.length === 1 && firstFile.isTextSnippet) {
+                        summaryEl.textContent = `Clipboard Text / Link (${sizeFormatted})`;
+                    } else {
+                        summaryEl.textContent = manifest.length === 1
+                            ? `${firstFile.name} (${sizeFormatted})`
+                            : `${manifest.length} files (${sizeFormatted} total) • ${firstFile.name} + ${manifest.length - 1} more`;
+                    }
                 }
                 if (modal) modal.classList.remove('hidden');
             }
@@ -455,7 +646,6 @@
 
             outgoingState.accepted = true;
             outgoingState.startTime = performance.now();
-            outgoingState.speedSamples = [{ time: performance.now(), bytes: outgoingState.confirmedBatchBytes }];
 
             const titleEl = document.getElementById('transferModalTitle');
             if (titleEl) titleEl.textContent = `Sending to ${outgoingState.peer.name}...`;
@@ -467,7 +657,6 @@
                 outgoingState.transportLabel = 'WebRTC Direct';
                 beginCurrentFileTransfer();
             } else {
-                // If WebRTC is still shaking hands, re-trigger connection if needed when watchdog fires
                 webrtcWatchdogTimer = setTimeout(() => {
                     if (!outgoingState) return;
                     const checkDc = dataChannels.get(outgoingState.peer.id);
@@ -514,8 +703,8 @@
         if (incModal) incModal.classList.add('hidden');
         if (!incomingState) return;
 
+        requestScreenWakeLock();
         incomingState.startTime = performance.now();
-        incomingState.speedSamples = [{ time: performance.now(), bytes: incomingState.receivedBatchBytes }];
 
         const totalFiles = incomingState.manifest.length;
         const label = totalFiles > 1
@@ -549,6 +738,7 @@
     function declineIncomingTransfer() {
         const incModal = document.getElementById('incomingModal');
         if (incModal) incModal.classList.add('hidden');
+        setTabTitleProgress(null);
         if (incomingState) {
             window.convoyDiscovery.sendDirectSignal(incomingState.peer.id, {
                 type: 'TRANSFER_CTRL',
@@ -561,7 +751,7 @@
     }
 
     // =========================================================================
-    // 5. ZERO-COPY WEBRTC STREAMING WITH 4 MB DISK PREFETCHING
+    // 5. 4-CHANNEL STRIPED STREAMING + 32 MB BLOB COMPACTION + INSTANT TEXT
     // =========================================================================
     function handleBatchControlFrame(frame) {
         if (!frame) return;
@@ -577,10 +767,15 @@
             incomingState.currentFileMeta = {
                 name: frame.fileName,
                 size: frame.fileSize,
-                type: frame.fileType
+                type: frame.fileType,
+                isTextSnippet: Boolean(frame.isTextSnippet)
             };
             incomingState.currentFileBytes = 0;
-            incomingState.currentFileChunks = [];
+            incomingState.nextExpectedSeq = 0;
+            incomingState.reorderBuffer.clear();
+            incomingState.ramChunks = [];
+            incomingState.ramBufferedBytes = 0;
+            incomingState.diskBlobSegments = [];
             incomingState.transportLabel = 'WebRTC Direct';
 
             const totalFiles = incomingState.manifest.length;
@@ -594,6 +789,25 @@
             if (frame.fileSize === 0) {
                 saveCompletedIncomingFile();
             }
+        } else if (frame.dcCtrl === 'REQUEST_RESUME_OFFSET') {
+            if (!incomingState) return;
+            const safeOffset = incomingState.nextExpectedSeq * WEBRTC_CHUNK_SIZE;
+            sendBatchControlFrame(incomingState.peer.id, {
+                dcCtrl: 'FILE_RESUME_SYNC',
+                fileIndex: incomingState.fileIndex,
+                byteOffset: safeOffset,
+                seq: incomingState.nextExpectedSeq
+            });
+        } else if (frame.dcCtrl === 'FILE_RESUME_SYNC') {
+            if (!outgoingState) return;
+            outgoingState.fileIndex = frame.fileIndex;
+            outgoingState.currentFile = outgoingState.files[frame.fileIndex];
+            outgoingState.fileByteOffset = frame.byteOffset || 0;
+            outgoingState.chunkSeq = frame.seq || Math.floor(outgoingState.fileByteOffset / WEBRTC_CHUNK_SIZE);
+            outgoingState.prefetchedMacro = null;
+            outgoingState.waitingForNextFileAck = false;
+            prefetchNextMacroBlock(outgoingState.currentFile, outgoingState.fileByteOffset);
+            pumpWebRtcMacroChunks();
         } else if (frame.dcCtrl === 'PROGRESS_ACK') {
             if (!outgoingState) return;
             outgoingState.confirmedBatchBytes = Math.max(
@@ -610,6 +824,7 @@
                 outgoingState.fileIndex++;
                 outgoingState.currentFile = outgoingState.files[outgoingState.fileIndex];
                 outgoingState.fileByteOffset = 0;
+                outgoingState.chunkSeq = 0;
                 outgoingState.prefetchedMacro = null;
                 prefetchNextMacroBlock(outgoingState.currentFile, 0);
                 beginCurrentFileTransfer();
@@ -635,13 +850,15 @@
         }
 
         outgoingState.waitingForNextFileAck = false;
+        outgoingState.chunkSeq = Math.floor(outgoingState.fileByteOffset / WEBRTC_CHUNK_SIZE);
 
         sendBatchControlFrame(outgoingState.peer.id, {
             dcCtrl: 'FILE_START',
             fileIndex: outgoingState.fileIndex,
             fileName: file.relativePath || file.name,
             fileSize: file.size,
-            fileType: file.type || 'application/octet-stream'
+            fileType: file.type || 'application/octet-stream',
+            isTextSnippet: Boolean(file.isTextSnippet)
         });
 
         if (file.size === 0) {
@@ -658,17 +875,11 @@
         }
 
         const peerId = outgoingState.peer.id;
-        const dc = dataChannels.get(peerId);
-        if (!dc || dc.readyState !== 'open') return;
+        const openChannels = getOpenChannelsForPeer(peerId);
+        if (openChannels.length === 0) return;
 
         outgoingState.pumping = true;
         const file = outgoingState.currentFile;
-
-        dc.onbufferedamountlow = () => {
-            if (outgoingState && !outgoingState.paused && !outgoingState.waitingForNextFileAck) {
-                pumpWebRtcMacroChunks();
-            }
-        };
 
         try {
             while (
@@ -677,8 +888,14 @@
                 outgoingState.currentFile === file &&
                 outgoingState.fileByteOffset < file.size
             ) {
-                if (dc.bufferedAmount >= WEBRTC_MAX_BUFFER) {
-                    // Prefetch next 4 MB from disk while waiting for Wi-Fi buffer to drain
+                const channels = getOpenChannelsForPeer(peerId);
+                if (channels.length === 0) {
+                    outgoingState.pumping = false;
+                    return;
+                }
+
+                const targetDc = pickLowestBufferedChannel(channels);
+                if (targetDc.bufferedAmount >= WEBRTC_MAX_BUFFER) {
                     prefetchNextMacroBlock(file, outgoingState.fileByteOffset);
                     outgoingState.pumping = false;
                     return;
@@ -700,7 +917,6 @@
                     break;
                 }
 
-                // Kick off background disk prefetch for the FOLLOWING 4 MB block immediately
                 const nextMacroOffset = currentOffset + macroBuffer.byteLength;
                 if (nextMacroOffset < file.size) {
                     prefetchNextMacroBlock(file, nextMacroOffset);
@@ -714,18 +930,45 @@
                         break;
                     }
 
+                    const activeChannels = getOpenChannelsForPeer(peerId);
+                    if (activeChannels.length === 0) {
+                        outgoingState.pumping = false;
+                        return;
+                    }
+
+                    const bestDc = pickLowestBufferedChannel(activeChannels);
+                    if (bestDc.bufferedAmount >= WEBRTC_MAX_BUFFER) {
+                        outgoingState.pumping = false;
+                        return;
+                    }
+
+                    if (!outgoingState.firstByteTime) {
+                        const now = performance.now();
+                        outgoingState.firstByteTime = now;
+                        outgoingState.startTime = now;
+                        outgoingState.speedSamples = [{ time: now, bytes: outgoingState.completedFilesBytes }];
+                    }
+
                     const chunkLen = Math.min(WEBRTC_CHUNK_SIZE, macroLen - innerOffset);
-                    // Zero-copy Uint8Array view into macroBuffer (0 memory allocation overhead)
-                    const chunkView = new Uint8Array(macroBuffer, innerOffset, chunkLen);
-                    dc.send(chunkView);
+                    const payloadView = new Uint8Array(macroBuffer, innerOffset, chunkLen);
+
+                    const framedPacket = new Uint8Array(STRIPE_HEADER_SIZE + chunkLen);
+                    framedPacket[0] = MAGIC_B0;
+                    framedPacket[1] = MAGIC_B1;
+                    framedPacket[2] = MAGIC_B2;
+                    framedPacket[3] = MAGIC_B3;
+
+                    const seq = outgoingState.chunkSeq++;
+                    framedPacket[4] = seq & 0xff;
+                    framedPacket[5] = (seq >>> 8) & 0xff;
+                    framedPacket[6] = (seq >>> 16) & 0xff;
+                    framedPacket[7] = (seq >>> 24) & 0xff;
+                    framedPacket.set(payloadView, STRIPE_HEADER_SIZE);
+
+                    bestDc.send(framedPacket);
 
                     innerOffset += chunkLen;
                     outgoingState.fileByteOffset += chunkLen;
-
-                    if (dc.bufferedAmount >= WEBRTC_MAX_BUFFER && outgoingState.fileByteOffset < file.size) {
-                        outgoingState.pumping = false;
-                        return; // dc.onbufferedamountlow resumes automatically
-                    }
                 }
             }
 
@@ -744,9 +987,42 @@
     function handleIncomingBinaryChunk(arrayBuffer) {
         if (!incomingState || !arrayBuffer) return;
 
-        incomingState.currentFileChunks.push(arrayBuffer);
-        incomingState.currentFileBytes += arrayBuffer.byteLength;
-        incomingState.receivedBatchBytes += arrayBuffer.byteLength;
+        if (!incomingState.firstByteTime) {
+            const now = performance.now();
+            incomingState.firstByteTime = now;
+            incomingState.startTime = now;
+            incomingState.speedSamples = [{ time: now, bytes: incomingState.receivedBatchBytes }];
+        }
+
+        const u8 = new Uint8Array(arrayBuffer);
+        const isStripedFrame =
+            u8.byteLength > STRIPE_HEADER_SIZE &&
+            u8[0] === MAGIC_B0 &&
+            u8[1] === MAGIC_B1 &&
+            u8[2] === MAGIC_B2 &&
+            u8[3] === MAGIC_B3;
+
+        if (isStripedFrame) {
+            const seq = (u8[4]) | (u8[5] << 8) | (u8[6] << 16) | ((u8[7] << 24) >>> 0);
+            const payloadView = new Uint8Array(arrayBuffer, STRIPE_HEADER_SIZE);
+
+            if (seq === incomingState.nextExpectedSeq) {
+                appendOrderedPayloadChunk(payloadView);
+                incomingState.nextExpectedSeq++;
+
+                while (incomingState.reorderBuffer.has(incomingState.nextExpectedSeq)) {
+                    const bufferedView = incomingState.reorderBuffer.get(incomingState.nextExpectedSeq);
+                    incomingState.reorderBuffer.delete(incomingState.nextExpectedSeq);
+                    appendOrderedPayloadChunk(bufferedView);
+                    incomingState.nextExpectedSeq++;
+                }
+            } else if (seq > incomingState.nextExpectedSeq) {
+                incomingState.reorderBuffer.set(seq, payloadView);
+            }
+        } else {
+            appendOrderedPayloadChunk(u8);
+            incomingState.nextExpectedSeq++;
+        }
 
         if (incomingState.receivedBatchBytes - incomingState.lastAckedBytes >= ACK_INTERVAL_BYTES) {
             incomingState.lastAckedBytes = incomingState.receivedBatchBytes;
@@ -756,28 +1032,66 @@
             });
         }
 
-        if (incomingState.currentFileBytes >= incomingState.currentFileMeta.size) {
+        if (incomingState && incomingState.currentFileBytes >= incomingState.currentFileMeta.size) {
             saveCompletedIncomingFile();
         }
     }
 
-    function saveCompletedIncomingFile() {
+    function appendOrderedPayloadChunk(uint8Chunk) {
+        incomingState.ramChunks.push(uint8Chunk);
+        incomingState.ramBufferedBytes += uint8Chunk.byteLength;
+        incomingState.currentFileBytes += uint8Chunk.byteLength;
+        incomingState.receivedBatchBytes += uint8Chunk.byteLength;
+
+        if (incomingState.ramBufferedBytes >= RAM_COMPACT_THRESHOLD) {
+            const segmentBlob = new Blob(incomingState.ramChunks);
+            incomingState.diskBlobSegments.push(segmentBlob);
+            incomingState.ramChunks = [];
+            incomingState.ramBufferedBytes = 0;
+        }
+    }
+
+    async function saveCompletedIncomingFile() {
         if (!incomingState) return;
 
-        const blob = new Blob(incomingState.currentFileChunks, {
-            type: incomingState.currentFileMeta.type
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = incomingState.currentFileMeta.name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
-
-        incomingState.currentFileChunks = [];
+        const meta = incomingState.currentFileMeta;
+        const senderName = incomingState.senderName;
         const peerId = incomingState.peer.id;
+        const allParts = [...incomingState.diskBlobSegments, ...incomingState.ramChunks];
+        const blob = new Blob(allParts, {
+            type: meta.type || 'application/octet-stream'
+        });
+
+        // Clear memory immediately
+        incomingState.ramChunks = [];
+        incomingState.diskBlobSegments = [];
+        incomingState.reorderBuffer.clear();
+        incomingState.ramBufferedBytes = 0;
+
+        const isClipboardSnippet =
+            Boolean(meta.isTextSnippet) ||
+            (meta.name.startsWith('clipboard_') && meta.name.endsWith('.txt') && meta.size <= 524288);
+
+        if (isClipboardSnippet) {
+            try {
+                const textContent = await blob.text();
+                lastReceivedTextSnippet = {
+                    text: textContent,
+                    fileName: meta.name || 'clipboard.txt',
+                    senderName
+                };
+                setTimeout(() => showIncomingTextSnippetModal(lastReceivedTextSnippet), 220);
+            } catch (_) {}
+        } else {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = meta.name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 15000);
+        }
 
         sendBatchControlFrame(peerId, {
             dcCtrl: 'PROGRESS_ACK',
@@ -792,21 +1106,77 @@
     }
 
     // =========================================================================
-    // 6. ROLLING LIVE SPEED METER & LOCKSTEP PROGRESS BAR
+    // INSTANT RECEIVED TEXT / LINK POPUP HANDLERS
+    // =========================================================================
+    function showIncomingTextSnippetModal(snippetObj) {
+        closeTransferModal();
+        const modal = document.getElementById('incomingTextModal');
+        const titleEl = document.getElementById('incomingTextModalTitle');
+        const contentEl = document.getElementById('incomingTextContent');
+        const openUrlBtn = document.getElementById('incomingTextOpenUrlBtn');
+
+        if (!modal || !contentEl) return;
+        if (titleEl) titleEl.textContent = `Text from ${snippetObj.senderName}`;
+        contentEl.value = snippetObj.text;
+
+        const trimmed = (snippetObj.text || '').trim();
+        const isUrl = /^https?:\/\/[^\s]+$/i.test(trimmed);
+        if (openUrlBtn) {
+            openUrlBtn.classList.toggle('hidden', !isUrl);
+        }
+        modal.classList.remove('hidden');
+    }
+
+    function closeIncomingTextModal() {
+        const modal = document.getElementById('incomingTextModal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    function copyReceivedText() {
+        const text = lastReceivedTextSnippet.text || '';
+        if (!text) return;
+        navigator.clipboard?.writeText(text);
+        window.convoyApp.showToast('Copied text to clipboard!', 'success');
+    }
+
+    function openReceivedTextUrl() {
+        const url = (lastReceivedTextSnippet.text || '').trim();
+        if (/^https?:\/\//i.test(url)) {
+            window.open(url, '_blank', 'noopener,noreferrer');
+        }
+    }
+
+    function saveReceivedTextAsFile() {
+        const blob = new Blob([lastReceivedTextSnippet.text || ''], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = lastReceivedTextSnippet.fileName || 'clipboard.txt';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        closeIncomingTextModal();
+    }
+
+    // =========================================================================
+    // 6. FIRST-BYTE ACCURATE SPEED METER & LOCKSTEP PROGRESS BAR
     // =========================================================================
     function computeRollingSpeedMBps(state, currentBytes) {
+        if (!state.firstByteTime) return '0.00';
+
         const now = performance.now();
-        if (!state.speedSamples) {
-            state.speedSamples = [{ time: now, bytes: currentBytes }];
+        if (!state.speedSamples || state.speedSamples.length === 0) {
+            state.speedSamples = [{ time: state.firstByteTime, bytes: 0 }];
         }
         state.speedSamples.push({ time: now, bytes: currentBytes });
 
-        while (state.speedSamples.length > 2 && now - state.speedSamples[0].time > 1500) {
+        while (state.speedSamples.length > 2 && now - state.speedSamples[0].time > 1400) {
             state.speedSamples.shift();
         }
 
         const oldest = state.speedSamples[0];
-        const deltaSec = Math.max(0.12, (now - oldest.time) / 1000);
+        const deltaSec = Math.max(0.08, (now - oldest.time) / 1000);
         const deltaBytes = Math.max(0, currentBytes - oldest.bytes);
         return ((deltaBytes / (1024 * 1024)) / deltaSec).toFixed(2);
     }
@@ -821,8 +1191,7 @@
             let doneBytes = 0;
 
             if (isSending) {
-                const dc = dataChannels.get(state.peer.id);
-                const buffered = dc ? dc.bufferedAmount : 0;
+                const buffered = getTotalBufferedAmount(state.peer.id);
                 const wireDrained = Math.max(0, state.completedFilesBytes + state.fileByteOffset - buffered);
                 doneBytes = Math.max(state.confirmedBatchBytes, wireDrained);
                 doneBytes = Math.min(totalBytes * 0.99, doneBytes);
@@ -835,30 +1204,32 @@
 
             const totalChunks = Math.max(1, Math.ceil(totalBytes / WEBRTC_CHUNK_SIZE));
             const currentChunk = Math.min(totalChunks, Math.ceil(doneBytes / WEBRTC_CHUNK_SIZE));
+            const channelCount = isSending ? getOpenChannelsForPeer(state.peer.id).length : PARALLEL_STRIPE_COUNT;
+            const label = state.reconnecting
+                ? 'Reconnecting Wi-Fi...'
+                : `${mbPerSec} MB/s • ${channelCount > 1 ? `${channelCount}x ` : ''}WebRTC Direct`;
 
-            updateModalMetrics(
-                pct,
-                currentChunk,
-                totalChunks,
-                doneBytes,
-                totalBytes,
-                `${mbPerSec} MB/s • WebRTC Direct`
-            );
+            setTabTitleProgress(`${pct}% • ${mbPerSec} MB/s`);
+            updateModalMetrics(pct, currentChunk, totalChunks, doneBytes, totalBytes, label);
         }, 100);
     }
 
     async function finishOutgoingBatch() {
         clearTimers();
+        releaseScreenWakeLock();
+        setTabTitleProgress(null);
         if (!outgoingState) return;
 
         const totalBytes = outgoingState.totalBatchBytes;
         const totalChunks = Math.max(1, Math.ceil(totalBytes / WEBRTC_CHUNK_SIZE));
-        const elapsedSec = Math.max(0.1, (performance.now() - outgoingState.startTime) / 1000);
+        const activeStart = outgoingState.firstByteTime || outgoingState.startTime;
+        const elapsedSec = Math.max(0.08, (performance.now() - activeStart) / 1000);
         const avgSpeed = ((totalBytes / (1024 * 1024)) / elapsedSec).toFixed(2);
 
         updateModalMetrics(100, totalChunks, totalChunks, totalBytes, totalBytes, `${avgSpeed} MB/s • 100% Complete`);
-        markTransferModalComplete(`Delivered ${outgoingState.files.length} file(s) to ${outgoingState.peer.name}`);
-        window.convoyApp.showToast(`Sent ${outgoingState.files.length} file(s) to ${outgoingState.peer.name}!`, 'success');
+        markTransferModalComplete(`Delivered ${outgoingState.files.length} item(s) to ${outgoingState.peer.name}`);
+        triggerHapticPing([35, 50, 35]);
+        window.convoyApp.showToast(`Sent ${outgoingState.files.length} item(s) to ${outgoingState.peer.name}!`, 'success');
 
         outgoingState = null;
         window.convoyDiscovery.announcePresence(true);
@@ -866,16 +1237,20 @@
 
     function finishIncomingBatch() {
         clearTimers();
+        releaseScreenWakeLock();
+        setTabTitleProgress(null);
         if (!incomingState) return;
 
         const totalBytes = incomingState.totalBatchBytes;
         const totalChunks = Math.max(1, Math.ceil(totalBytes / WEBRTC_CHUNK_SIZE));
-        const elapsedSec = Math.max(0.1, (performance.now() - incomingState.startTime) / 1000);
+        const activeStart = incomingState.firstByteTime || incomingState.startTime;
+        const elapsedSec = Math.max(0.08, (performance.now() - activeStart) / 1000);
         const avgSpeed = ((totalBytes / (1024 * 1024)) / elapsedSec).toFixed(2);
 
         updateModalMetrics(100, totalChunks, totalChunks, totalBytes, totalBytes, `${avgSpeed} MB/s • 100% Complete`);
-        markTransferModalComplete(`Saved ${incomingState.manifest.length} file(s)`);
-        window.convoyApp.showToast(`Received ${incomingState.manifest.length} file(s)!`, 'success');
+        markTransferModalComplete(`Received ${incomingState.manifest.length} item(s)`);
+        triggerHapticPing([35, 50, 35]);
+        window.convoyApp.showToast(`Received ${incomingState.manifest.length} item(s)!`, 'success');
 
         incomingState = null;
         window.convoyDiscovery.announcePresence(true);
@@ -974,10 +1349,13 @@
         if (uiUpdateTimer) clearInterval(uiUpdateTimer);
         if (offerRetryTimer) clearInterval(offerRetryTimer);
         if (webrtcWatchdogTimer) clearTimeout(webrtcWatchdogTimer);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
     }
 
     function closeTransferModal() {
         clearTimers();
+        releaseScreenWakeLock();
+        setTabTitleProgress(null);
         const modal = document.getElementById('transferModal');
         if (modal) modal.classList.add('hidden');
         window.convoyDiscovery.announcePresence(true);
@@ -985,6 +1363,8 @@
 
     function cancelTransfer() {
         clearTimers();
+        releaseScreenWakeLock();
+        setTabTitleProgress(null);
 
         const targetPeerId = outgoingState?.peer?.id || incomingState?.peer?.id;
         if (targetPeerId) {
@@ -1015,6 +1395,10 @@
         togglePauseTransfer,
         resumeFromLedger,
         closeTransferModal,
-        cancelTransfer
+        cancelTransfer,
+        closeIncomingTextModal,
+        copyReceivedText,
+        openReceivedTextUrl,
+        saveReceivedTextAsFile
     };
 })();

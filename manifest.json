@@ -26,5 +26,21 @@
       "sizes": "any",
       "type": "image/svg+xml"
     }
-  ]
+  ],
+  "share_target": {
+    "action": "./index.html?share-target=1",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "shared_files",
+          "accept": ["*/*"]
+        }
+      ]
+    }
+  }
 }

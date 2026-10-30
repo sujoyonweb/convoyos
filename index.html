@@ -413,6 +413,64 @@
         </div>
     </div>
 
+    <!-- MODAL 6: CLIPBOARD TEXT / LINK COMPOSER (Fallback when mobile blocks direct clipboard read) -->
+    <div id="clipboardInputModal" class="modal-backdrop hidden">
+        <div class="glass-card modal-card">
+            <div class="modal-header">
+                <div class="staged-title-group">
+                    <span class="ping-dot"></span>
+                    <h3 class="staged-title">Stage Text or Link</h3>
+                </div>
+                <button type="button" class="icon-btn" style="width:28px; height:28px" onclick="window.convoyDragDrop.closeClipboardModal()">
+                    <svg class="icon"><use href="#icon-close"></use></svg>
+                </button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px">
+                <p style="font-size:12px; color:var(--text-secondary)">
+                    Paste or type a link, OTP, or text snippet below to send directly to another device:
+                </p>
+                <textarea id="clipboardManualTextarea" class="text-input" rows="4" style="width:100%; resize:vertical; font-family:var(--font-mono)" placeholder="Paste or type text / URL here..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-modal secondary" onclick="window.convoyDragDrop.closeClipboardModal()">
+                    Cancel
+                </button>
+                <button type="button" class="btn-modal primary" onclick="window.convoyDragDrop.stageManualClipboardText()">
+                    Stage Snippet
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 7: RECEIVED TEXT / LINK INSTANT COPY & OPEN POPUP -->
+    <div id="incomingTextModal" class="modal-backdrop hidden">
+        <div class="glass-card modal-card">
+            <div class="modal-header">
+                <div class="staged-title-group">
+                    <span class="ping-dot"></span>
+                    <h3 id="incomingTextModalTitle" class="staged-title">Received Text Snippet</h3>
+                </div>
+                <button type="button" class="icon-btn" style="width:28px; height:28px" onclick="window.convoyTransfer.closeIncomingTextModal()">
+                    <svg class="icon"><use href="#icon-close"></use></svg>
+                </button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px">
+                <textarea id="incomingTextContent" class="text-input" rows="5" readonly style="width:100%; resize:vertical; font-family:var(--font-mono); color:#fff"></textarea>
+            </div>
+            <div class="modal-actions" style="flex-wrap:wrap">
+                <button type="button" class="btn-modal secondary" onclick="window.convoyTransfer.saveReceivedTextAsFile()">
+                    Save .txt
+                </button>
+                <button type="button" id="incomingTextOpenUrlBtn" class="btn-modal secondary hidden" onclick="window.convoyTransfer.openReceivedTextUrl()">
+                    Open Link
+                </button>
+                <button type="button" class="btn-modal primary" onclick="window.convoyTransfer.copyReceivedText()">
+                    <svg class="icon" style="margin-right:4px"><use href="#icon-copy"></use></svg> Copy Text
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- TOAST NOTIFICATIONS -->
     <div id="toastContainer" class="toast-container"></div>
 
@@ -436,5 +494,6 @@
     <script src="./js/discovery.js"></script>
     <script src="./js/transfer.js"></script>
     <script src="./js/app.js"></script>
+    <script src="./js/native-turbo.js"></script>
 </body>
 </html>

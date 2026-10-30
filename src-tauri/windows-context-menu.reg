@@ -1,0 +1,8 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Classes\*\shell\convoyOS]
+@="⚡ Send with convoyOS"
+"Icon"="\"C:\\Program Files\\convoyOS\\convoyos.exe\""
+
+[HKEY_CURRENT_USER\Software\Classes\*\shell\convoyOS\command]
+@="\"C:\\Program Files\\convoyOS\\convoyos.exe\" \"%1\""

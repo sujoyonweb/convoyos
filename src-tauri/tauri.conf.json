@@ -1,0 +1,33 @@
+{
+  "productName": "convoyOS",
+  "version": "0.1.0",
+  "identifier": "io.github.sujoyonweb.convoyos",
+  "build": {
+    "frontendDist": "../"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "convoyOS — Fast Local & P2P File Sharing",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 380,
+        "minHeight": 600,
+        "resizable": true,
+        "backgroundColor": "#0c0c0c"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "../assets/icon-192.png",
+      "../assets/icon-512.png"
+    ]
+  }
+}
