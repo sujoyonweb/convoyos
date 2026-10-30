@@ -1,0 +1,148 @@
+name: Build convoyOS Native Apps (APK, AAB & Windows EXE)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  # ===========================================================================
+  # JOB 1: BUILD WINDOWS .EXE (STANDALONE + INSTALLER)
+  # ===========================================================================
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare Isolated Frontend Dist & Generate Native Icons from SVG
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item index.html, manifest.json, sw.js dist/
+          Copy-Item -Recurse css, js, assets dist/
+          npx --yes @tauri-apps/cli@^2.0.0 icon ./assets/favicon.svg
+
+      - name: Build Windows .exe & Installer
+        shell: pwsh
+        run: |
+          npx --yes @tauri-apps/cli@^2.0.0 build
+
+      - name: Upload Windows .exe Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: convoyOS-Windows-EXE
+          path: |
+            src-tauri/target/release/convoyos.exe
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            windows-context-menu.reg
+
+  # ===========================================================================
+  # JOB 2: BUILD ANDROID .APK (DIRECT INSTALL) & .AAB (GOOGLE PLAY STORE)
+  # ===========================================================================
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java 17 (Required for Android Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK & Build Tools
+        run: |
+          sdkmanager --install "ndk;26.3.11579264" "platforms;android-34" "build-tools;34.0.0"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
+
+      - name: Setup Rust & Android Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Prepare Frontend Dist & Generate Adaptive Android Icons from SVG
+        run: |
+          mkdir -p dist
+          cp index.html manifest.json sw.js dist/
+          cp -r css js assets dist/
+          npx --yes @tauri-apps/cli@^2.0.0 icon ./assets/favicon.svg
+
+      - name: Initialize Tauri Android Project & Inject Wi-Fi / LAN Permissions
+        run: |
+          npx --yes @tauri-apps/cli@^2.0.0 android init
+          MANIFEST="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            sed -i 's/<application/<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" \/>\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" \/>\n    <uses-permission android:name="android.permission.CAMERA" \/>\n    <application android:usesCleartextTraffic="true"/' "$MANIFEST"
+          fi
+
+      - name: Build Android .APK and Google Play .AAB
+        run: |
+          npx --yes @tauri-apps/cli@^2.0.0 android build
+
+      - name: Sign Android .APK & Play Store .AAB
+        run: |
+          KEYSTORE="$RUNNER_TEMP/convoyos-release.keystore"
+          keytool -genkeypair -v \
+            -keystore "$KEYSTORE" \
+            -alias convoyos \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass convoyos123 \
+            -keypass convoyos123 \
+            -dname "CN=Sujoy Biswas, OU=convoyOS, O=convoyOS, L=Kalyani, S=WB, C=IN"
+
+          mkdir -p signed-output
+
+          UNSIGNED_APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
+          if [ -n "$UNSIGNED_APK" ]; then
+            "$ANDROID_HOME/build-tools/34.0.0/zipalign" -v -p 4 "$UNSIGNED_APK" signed-output/aligned.apk
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" sign \
+              --ks "$KEYSTORE" \
+              --ks-key-alias convoyos \
+              --ks-pass pass:convoyos123 \
+              --key-pass pass:convoyos123 \
+              --out signed-output/convoyOS-v0.1.0.apk \
+              signed-output/aligned.apk
+            rm -f signed-output/aligned.apk
+          fi
+
+          UNSIGNED_AAB=$(find src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -n 1)
+          if [ -n "$UNSIGNED_AAB" ]; then
+            cp "$UNSIGNED_AAB" signed-output/convoyOS-PlayStore-v0.1.0.aab
+            jarsigner -verbose \
+              -sigalg SHA256withRSA \
+              -digestalg SHA-256 \
+              -keystore "$KEYSTORE" \
+              -storepass convoyos123 \
+              -keypass convoyos123 \
+              signed-output/convoyOS-PlayStore-v0.1.0.aab \
+              convoyos
+          fi
+
+      - name: Upload Signed Android .APK & Play Store .AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: convoyOS-Android-APK-and-PlayStore-AAB
+          path: |
+            signed-output/convoyOS-v0.1.0.apk
+            signed-output/convoyOS-PlayStore-v0.1.0.aab
