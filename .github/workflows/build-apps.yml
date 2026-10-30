@@ -18,30 +18,24 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup Rust Stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Tauri CLI & Dependencies
+      - name: Prepare Frontend Dist & Generate Icons from PNG
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item index.html, manifest.json, sw.js dist/
           Copy-Item -Recurse css, js, assets dist/
-          npm install --save-dev @tauri-apps/cli@^2 @tauri-apps/api@^2
-
-      - name: Generate Native Icons from SVG
-        shell: pwsh
-        run: |
-          cd src-tauri
-          npx tauri icon ../assets/favicon.svg
+          npm install --no-save @tauri-apps/cli@^2.0.0
+          npx tauri icon ./assets/icon-512.png
 
       - name: Build Windows .exe & Installer
         shell: pwsh
         run: |
-          cd src-tauri
-          npx tauri build
+          npx tauri build --ci
 
       - name: Upload Windows .exe Artifacts
         uses: actions/upload-artifact@v4
@@ -51,7 +45,7 @@ jobs:
             src-tauri/target/release/convoyos.exe
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
-            windows-context-menu.reg
+            src-tauri/windows-context-menu.reg
 
   # ===========================================================================
   # JOB 2: BUILD ANDROID .APK (DIRECT INSTALL) & .AAB (GOOGLE PLAY STORE)
@@ -65,7 +59,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -73,44 +67,37 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK & NDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK & Build Tools
+      - name: Configure Pre-Installed Android SDK & NDK
         run: |
-          sdkmanager --install "ndk;26.3.11579264" "platforms;android-34" "build-tools;34.0.0"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;26.3.11579264" "platforms;android-34" "build-tools;34.0.0"
           echo "NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
 
       - name: Setup Rust & Android Targets
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
-      - name: Install Tauri CLI & Prepare Frontend Dist
+      - name: Prepare Frontend Dist & Generate Adaptive Android Icons
         run: |
           mkdir -p dist
           cp index.html manifest.json sw.js dist/
           cp -r css js assets dist/
-          npm install --save-dev @tauri-apps/cli@^2 @tauri-apps/api@^2
-
-      - name: Generate Adaptive Android Icons
-        run: |
-          cd src-tauri
-          npx tauri icon ../assets/favicon.svg
+          npm install --no-save @tauri-apps/cli@^2.0.0
+          npx tauri icon ./assets/icon-512.png
 
       - name: Initialize Tauri Android Project & Inject Wi-Fi / LAN Permissions
         run: |
-          cd src-tauri
-          npx tauri android init --force || true
-          MANIFEST="gen/android/app/src/main/AndroidManifest.xml"
+          npx tauri android init --ci
+          MANIFEST="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             sed -i 's/<application/<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" \/>\n    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" \/>\n    <uses-permission android:name="android.permission.CAMERA" \/>\n    <application android:usesCleartextTraffic="true"/' "$MANIFEST"
           fi
 
       - name: Build Android .APK and Google Play .AAB
         run: |
-          cd src-tauri
-          npx tauri android build
+          npx tauri android build --ci
 
       - name: Sign Android .APK & Play Store .AAB
         run: |
