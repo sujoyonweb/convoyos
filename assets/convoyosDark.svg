@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="100%" height="100%">
+  <defs>
+    <!-- Obsidian Carbon Base -->
+    <linearGradient id="darkBase" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#161922" />
+      <stop offset="50%" stop-color="#0c0c0c" />
+      <stop offset="100%" stop-color="#08090c" />
+    </linearGradient>
+
+    <!-- Ambient Blue-Purple Mesh Glow -->
+    <radialGradient id="neonAura" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.32" />
+      <stop offset="55%" stop-color="#8b5cf6" stop-opacity="0.12" />
+      <stop offset="100%" stop-color="#0c0c0c" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Neon Rim Border -->
+    <linearGradient id="rimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.7" />
+      <stop offset="50%" stop-color="#6366f1" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0.7" />
+    </linearGradient>
+
+    <!-- Electric Bolt Gradient -->
+    <linearGradient id="electricBolt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa" />
+      <stop offset="50%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#8b5cf6" />
+    </linearGradient>
+
+    <filter id="neonGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="12" stdDeviation="32" flood-color="#3b82f6" flood-opacity="0.55" />
+    </filter>
+  </defs>
+
+  <!-- 1. Dark Squircle Base -->
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#darkBase)" />
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#neonAura)" />
+  <rect x="36" y="36" width="952" height="952" rx="220" fill="none" stroke="url(#rimGrad)" stroke-width="10" />
+
+  <!-- 2. P2P Radar Rings -->
+  <circle cx="512" cy="512" r="356" fill="none" stroke="#3b82f6" stroke-width="5" stroke-opacity="0.22" stroke-dasharray="24 20" />
+  <circle cx="512" cy="512" r="256" fill="none" stroke="#8b5cf6" stroke-width="6" stroke-opacity="0.3" />
+
+  <!-- 3. Active P2P Peer Nodes -->
+  <circle cx="331" cy="331" r="24" fill="#60a5fa" />
+  <circle cx="693" cy="693" r="24" fill="#c084fc" />
+
+  <!-- 4. Center Electric Bolt -->
+  <path d="M566 156 L262 548 H482 L442 868 L762 476 H542 L566 156 Z" fill="url(#electricBolt)" stroke="#93c5fd" stroke-width="10" stroke-linejoin="round" filter="url(#neonGlow)" />
+</svg>

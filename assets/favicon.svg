@@ -1,55 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-    <!-- DEFINITIONS & EFFECTS -->
-    <defs>
-        <!-- Dark Squircle Background Gradient -->
-        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#222226" />
-            <stop offset="100%" stop-color="#0d0d0f" />
-        </linearGradient>
-        
-        <!-- Premium Core Accent Gradient (Blue -> Purple -> Emerald) -->
-        <linearGradient id="sGrad" x1="100%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#3b82f6" />
-            <stop offset="50%" stop-color="#8b5cf6" />
-            <stop offset="100%" stop-color="#10b981" />
-        </linearGradient>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="100%" height="100%">
+  <defs>
+    <!-- Main Squircle Electric Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d4ed8" />
+      <stop offset="50%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
 
-        <!-- Subtle Tech Orbit Gradient -->
-        <linearGradient id="orbitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.4"/>
-            <stop offset="100%" stop-color="#10b981" stop-opacity="0.05"/>
-        </linearGradient>
+    <!-- Inner Ambient Glow -->
+    <radialGradient id="coreGlow" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.45" />
+      <stop offset="60%" stop-color="#4f46e5" stop-opacity="0.1" />
+      <stop offset="100%" stop-color="#0c0c0c" stop-opacity="0" />
+    </radialGradient>
 
-        <!-- Intense Core Glow Filter -->
-        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="16" result="blur" />
-            <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-            </feMerge>
-        </filter>
-    </defs>
+    <!-- Specular Top Glass Highlight -->
+    <linearGradient id="glassEdge" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.38" />
+      <stop offset="25%" stop-color="#ffffff" stop-opacity="0.06" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
 
-    <!-- BASE LAYER: iOS Squircle -->
-    <rect width="512" height="512" rx="116" fill="url(#bgGrad)" stroke="#27272a" stroke-width="2"/>
+    <!-- Center Lightning Bolt Gradient -->
+    <linearGradient id="boltGrad" x1="20%" y1="0%" x2="80%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="65%" stop-color="#f0f9ff" />
+      <stop offset="100%" stop-color="#bae6fd" />
+    </linearGradient>
 
-    <!-- MIDDLE LAYER: The OS Tracker Orbit -->
-    <circle cx="256" cy="256" r="184" fill="none" stroke="url(#orbitGrad)" stroke-width="3" stroke-dasharray="4 16" stroke-linecap="round"/>
+    <!-- Soft Drop Shadow for Centerpiece -->
+    <filter id="boltShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="28" flood-color="#090d16" flood-opacity="0.55" />
+    </filter>
+  </defs>
 
-    <!-- TOP LAYER: The "S" Progress Line -->
-    <path d="M 356 160 L 156 160 A 48 48 0 0 0 156 256 L 356 256 A 48 48 0 0 1 356 352 L 156 352"
-          fill="none" stroke="url(#sGrad)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"
-          filter="url(#glow)"/>
+  <!-- 1. Base Squircle -->
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#bgGrad)" />
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#coreGlow)" />
 
-    <!-- NODE 1: Concept Checkpoint (Top Right) -->
-    <circle cx="356" cy="160" r="20" fill="#0d0d0f" />
-    <circle cx="356" cy="160" r="8" fill="#3b82f6" />
+  <!-- 2. Outer P2P Radar Ring -->
+  <circle cx="512" cy="512" r="360" fill="none" stroke="#ffffff" stroke-width="6" stroke-opacity="0.14" stroke-dasharray="28 20" />
 
-    <!-- NODE 2: Practice Checkpoint (Center) -->
-    <circle cx="256" cy="256" r="20" fill="#0d0d0f" />
-    <circle cx="256" cy="256" r="8" fill="#8b5cf6" />
+  <!-- 3. Inner Orbital Mesh Ring -->
+  <circle cx="512" cy="512" r="264" fill="none" stroke="#ffffff" stroke-width="8" stroke-opacity="0.22" />
 
-    <!-- NODE 3: Test Checkpoint (Bottom Left) -->
-    <circle cx="156" cy="352" r="20" fill="#0d0d0f" />
-    <circle cx="156" cy="352" r="8" fill="#10b981" />
+  <!-- 4. Connected P2P Satellite Nodes (Top-Left & Bottom-Right) -->
+  <circle cx="325" cy="325" r="26" fill="#ffffff" fill-opacity="0.92" />
+  <circle cx="325" cy="325" r="44" fill="none" stroke="#ffffff" stroke-width="4" stroke-opacity="0.35" />
+
+  <circle cx="699" cy="699" r="26" fill="#ffffff" fill-opacity="0.92" />
+  <circle cx="699" cy="699" r="44" fill="none" stroke="#ffffff" stroke-width="4" stroke-opacity="0.35" />
+
+  <!-- 5. Specular Glass Rim -->
+  <rect x="36" y="36" width="952" height="952" rx="220" fill="none" stroke="url(#glassEdge)" stroke-width="8" />
+
+  <!-- 6. Central convoyOS Lightning Bolt -->
+  <path d="M566 156 L262 548 H482 L442 868 L762 476 H542 L566 156 Z" fill="url(#boltGrad)" stroke="#ffffff" stroke-width="12" stroke-linejoin="round" filter="url(#boltShadow)" />
 </svg>

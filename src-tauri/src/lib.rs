@@ -47,7 +47,6 @@ struct AppState {
     os_name: Mutex<String>,
     device_type: Mutex<String>,
     lan_ip: String,
-    web_root: PathBuf,
     downloads_dir: PathBuf,
     peers: Mutex<HashMap<String, LanPeer>>,
     incoming_notices: Mutex<Vec<IncomingFileNotice>>,
@@ -84,18 +83,52 @@ fn resolve_downloads_dir() -> PathBuf {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let android_dl = PathBuf::from("/storage/emulated/0/Download");
+        if android_dl.exists() {
+            return android_dl;
+        }
         if let Ok(home) = env::var("HOME") {
             let p = PathBuf::from(home).join("Downloads");
             if p.exists() {
                 return p;
             }
         }
-        let android_dl = PathBuf::from("/storage/emulated/0/Download");
-        if android_dl.exists() {
-            return android_dl;
-        }
     }
     env::temp_dir()
+}
+
+fn get_unique_file_path(dir: &Path, raw_name: &str) -> (PathBuf, String) {
+    let safe_name = Path::new(raw_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("received_file.bin");
+
+    let candidate = dir.join(safe_name);
+    if !candidate.exists() {
+        return (candidate, safe_name.to_string());
+    }
+
+    let stem = Path::new(safe_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let ext = Path::new(safe_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+
+    for i in 1..10000 {
+        let numbered = if ext.is_empty() {
+            format!("{} ({})", stem, i)
+        } else {
+            format!("{} ({}).{}", stem, i, ext)
+        };
+        let p = dir.join(&numbered);
+        if !p.exists() {
+            return (p, numbered);
+        }
+    }
+    (candidate, safe_name.to_string())
 }
 
 fn url_decode(input: &str) -> String {
@@ -133,9 +166,28 @@ fn parse_query_params(query: &str) -> HashMap<String, String> {
     map
 }
 
-// =========================================================================
-// 1. 0% INTERNET UDP MULTICAST & HOTSPOT BROADCAST ENGINE
-// =========================================================================
+// Embedded Web Assets so Zero-Install Mobile Hotspot Hosting works inside Android .apk & Windows .exe
+fn get_embedded_web_asset(rel_path: &str) -> Option<(&'static [u8], &'static str)> {
+    match rel_path {
+        "index.html" => Some((include_bytes!("../../index.html"), "text/html; charset=utf-8")),
+        "manifest.json" => Some((include_bytes!("../../manifest.json"), "application/json; charset=utf-8")),
+        "sw.js" => Some((include_bytes!("../../sw.js"), "application/javascript; charset=utf-8")),
+        "css/variables.css" => Some((include_bytes!("../../css/variables.css"), "text/css; charset=utf-8")),
+        "css/reset.css" => Some((include_bytes!("../../css/reset.css"), "text/css; charset=utf-8")),
+        "css/main.css" => Some((include_bytes!("../../css/main.css"), "text/css; charset=utf-8")),
+        "css/components.css" => Some((include_bytes!("../../css/components.css"), "text/css; charset=utf-8")),
+        "js/qr.js" => Some((include_bytes!("../../js/qr.js"), "application/javascript; charset=utf-8")),
+        "js/storage.js" => Some((include_bytes!("../../js/storage.js"), "application/javascript; charset=utf-8")),
+        "js/dragdrop.js" => Some((include_bytes!("../../js/dragdrop.js"), "application/javascript; charset=utf-8")),
+        "js/discovery.js" => Some((include_bytes!("../../js/discovery.js"), "application/javascript; charset=utf-8")),
+        "js/transfer.js" => Some((include_bytes!("../../js/transfer.js"), "application/javascript; charset=utf-8")),
+        "js/app.js" => Some((include_bytes!("../../js/app.js"), "application/javascript; charset=utf-8")),
+        "js/native-turbo.js" => Some((include_bytes!("../../js/native-turbo.js"), "application/javascript; charset=utf-8")),
+        "assets/favicon.svg" => Some((include_bytes!("../../assets/favicon.svg"), "image/svg+xml")),
+        _ => None,
+    }
+}
+
 fn spawn_udp_multicast_radar(state: Arc<AppState>) {
     let state_tx = state.clone();
     std::thread::spawn(move || {
@@ -200,9 +252,6 @@ fn spawn_udp_multicast_radar(state: Arc<AppState>) {
     });
 }
 
-// =========================================================================
-// 2. KERNEL TCP/HTTP TURBO SERVER + ZERO-INSTALL HOTSPOT WEB HOST
-// =========================================================================
 async fn run_turbo_http_server(state: Arc<AppState>) {
     let bind_addr = SocketAddr::from(([0, 0, 0, 0], TURBO_PORT));
     let listener = match TcpListener::bind(bind_addr).await {
@@ -212,13 +261,26 @@ async fn run_turbo_http_server(state: Arc<AppState>) {
 
     loop {
         if let Ok((stream, _)) = listener.accept().await {
-            let _ = stream.set_nodelay(true); // Disable Nagle's algorithm for instant chunk flush
+            let _ = stream.set_nodelay(true);
             let st = state.clone();
             tokio::spawn(async move {
                 let _ = handle_http_connection(stream, st).await;
             });
         }
     }
+}
+
+fn parse_content_length(header_str: &str) -> u64 {
+    for line in header_str.lines() {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("content-length") {
+                if let Ok(len) = v.trim().parse::<u64>() {
+                    return len;
+                }
+            }
+        }
+    }
+    0
 }
 
 async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> std::io::Result<()> {
@@ -256,19 +318,16 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
     let (path, query_str) = full_path.split_once('?').unwrap_or((full_path, ""));
     let params = parse_query_params(query_str);
 
-    // Handle CORS Preflight
     if method == "OPTIONS" {
         let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nContent-Length: 0\r\n\r\n";
         stream.write_all(resp.as_bytes()).await?;
         return Ok(());
     }
 
-    // Route 1: Health Ping
     if path == "/api/ping" {
         return send_json_response(&mut stream, "{\"ok\":true}").await;
     }
 
-    // Route 2: Node Info
     if path == "/api/node-info" {
         let json = serde_json::json!({
             "nodeId": *state.node_id.lock().unwrap(),
@@ -279,7 +338,6 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
         return send_json_response(&mut stream, &json.to_string()).await;
     }
 
-    // Route 3: Poll Discovered UDP Multicast Peers & Completed Incoming Uploads
     if path == "/api/lan-peers" {
         if let Some(id) = params.get("id") {
             *state.node_id.lock().unwrap() = id.clone();
@@ -311,7 +369,6 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
         return send_json_response(&mut stream, &json.to_string()).await;
     }
 
-    // Route 4: Windows Explorer Right-Click ("Send with convoyOS") Staged CLI Files
     if path == "/api/cli-staged" {
         let list = state.cli_files.lock().unwrap().clone();
         let json = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string());
@@ -335,21 +392,16 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
         return send_404(&mut stream).await;
     }
 
-    // Route 5: Zero-Copy Kernel Turbo Upload (POST /api/upload)
-    if method == "POST" && path == "/api/upload" {
+    // Route: Save WebRTC / Global Link Blob directly to Native Downloads (/api/save-local) or Turbo Upload (/api/upload)
+    if method == "POST" && (path == "/api/upload" || path == "/api/save-local") {
         let raw_name = params.get("name").cloned().unwrap_or_else(|| "received_file.bin".to_string());
-        let safe_name = Path::new(&raw_name)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("received_file.bin")
-            .to_string();
         let expected_size = params
             .get("size")
             .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0);
+            .unwrap_or_else(|| parse_content_length(&header_str));
         let sender = params.get("sender").cloned().unwrap_or_else(|| "Peer".to_string());
 
-        let dest_path = state.downloads_dir.join(&safe_name);
+        let (dest_path, final_name) = get_unique_file_path(&state.downloads_dir, &raw_name);
         let mut out_file = File::create(&dest_path).await?;
 
         let already_read_body = &header_buf[header_end_pos..read_total];
@@ -359,7 +411,6 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
             written += already_read_body.len() as u64;
         }
 
-        // Stream directly from TCP socket to disk in 1 MB kernel blocks (Zero RAM bloat)
         let mut chunk_buf = vec![0u8; 1048576];
         while written < expected_size {
             let to_read = std::cmp::min(chunk_buf.len() as u64, expected_size - written) as usize;
@@ -372,46 +423,40 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
         }
         out_file.flush().await?;
 
-        state.incoming_notices.lock().unwrap().push(IncomingFileNotice {
-            file_name: safe_name,
-            file_size: written,
-            sender,
-        });
+        if path == "/api/upload" {
+            state.incoming_notices.lock().unwrap().push(IncomingFileNotice {
+                file_name: final_name.clone(),
+                file_size: written,
+                sender,
+            });
+        }
 
-        return send_json_response(&mut stream, "{\"saved\":true}").await;
+        let resp_json = serde_json::json!({
+            "saved": true,
+            "savedName": final_name
+        });
+        return send_json_response(&mut stream, &resp_json.to_string()).await;
     }
 
-    // Route 6: Zero-Install Wi-Fi / Hotspot Web Host (Serves index.html, css/, js/, assets/)
+    // Serve Embedded Web UI Assets for Zero-Install Wi-Fi / Hotspot Guests
     let rel_path = if path == "/" || path.is_empty() {
         "index.html"
     } else {
         path.trim_start_matches('/')
     };
 
-    if rel_path.contains("..") {
-        return send_404(&mut stream).await;
-    }
-
-    let disk_path = state.web_root.join(rel_path);
-    if disk_path.is_file() {
-        let mime = guess_mime_type(&disk_path);
-        return serve_disk_file(&mut stream, &disk_path, mime).await;
+    if let Some((bytes, mime)) = get_embedded_web_asset(rel_path) {
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n",
+            mime,
+            bytes.len()
+        );
+        stream.write_all(header.as_bytes()).await?;
+        stream.write_all(bytes).await?;
+        return Ok(());
     }
 
     send_404(&mut stream).await
-}
-
-fn guess_mime_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "html" => "text/html; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "js" => "application/javascript; charset=utf-8",
-        "json" => "application/json; charset=utf-8",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "woff2" => "font/woff2",
-        _ => "application/octet-stream",
-    }
 }
 
 async fn send_json_response(stream: &mut TcpStream, body: &str) -> std::io::Result<()> {
@@ -448,7 +493,6 @@ async fn send_404(stream: &mut TcpStream) -> std::io::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Capture any files passed via Windows Explorer Right-Click ("Send with convoyOS")
     let mut cli_items = Vec::new();
     for (idx, arg) in env::args().skip(1).enumerate() {
         let p = PathBuf::from(&arg);
@@ -466,20 +510,12 @@ pub fn run() {
         }
     }
 
-    let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let web_root = if current_dir.join("index.html").exists() {
-        current_dir
-    } else {
-        current_dir.parent().unwrap_or(Path::new(".")).to_path_buf()
-    };
-
     let state = Arc::new(AppState {
         node_id: Mutex::new("NODE-NATIVE".to_string()),
         device_name: Mutex::new("convoyOS Turbo Node".to_string()),
         os_name: Mutex::new(env::consts::OS.to_uppercase()),
         device_type: Mutex::new("desktop".to_string()),
         lan_ip: detect_lan_ipv4(),
-        web_root,
         downloads_dir: resolve_downloads_dir(),
         peers: Mutex::new(HashMap::new()),
         incoming_notices: Mutex::new(Vec::new()),

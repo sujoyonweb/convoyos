@@ -1,14 +1,20 @@
 {
-  "name": "convoyOS - Offline-First P2P File Sharing",
+  "name": "convoyOS — Fast Local & P2P File Sharing",
   "short_name": "convoyOS",
   "description": "Zero-server local mesh and P2P file sharing with resumable chunk transfers, QR pairing, and direct link streaming.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0c0c0c",
-  "theme_color": "#0c0c0c",
+  "background_color": "#0e1015",
+  "theme_color": "#0e1015",
   "orientation": "any",
   "icons": [
+    {
+      "src": "./assets/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "./assets/icon-192.png",
       "sizes": "192x192",
@@ -24,7 +30,8 @@
     {
       "src": "./assets/favicon.svg",
       "sizes": "any",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ],
   "share_target": {

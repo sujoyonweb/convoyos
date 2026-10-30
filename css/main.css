@@ -2,6 +2,14 @@
    convoyOS - MAIN LAYOUT & RESPONSIVE GRID (1400px Max Width)
    ========================================================================== */
 
+html, body {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    background-color: var(--bg-dark);
+    color: var(--text-primary);
+}
+
 .container {
     width: 100%;
     max-width: var(--container-max);
@@ -17,7 +25,7 @@
     padding: 32px 24px;
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 32px;
+    gap: 28px;
     align-items: start;
 }
 
@@ -26,6 +34,9 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
 }
 
 .right-col {
@@ -33,6 +44,9 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
 }
 
 /* Base Glass Surface */
@@ -40,6 +54,10 @@
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-xl);
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.35);
     transition: border-color 0.25s var(--ease-out-expo), box-shadow 0.25s var(--ease-out-expo);
 }
 
@@ -55,8 +73,8 @@
     width: 100%;
     border-bottom: 1px solid var(--border-subtle);
     background: var(--bg-header);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     position: sticky;
     top: 0;
     z-index: 50;
@@ -67,13 +85,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px;
+    min-width: 0;
 }
 
 .brand-wrap {
     display: flex;
     align-items: center;
     gap: 12px;
+    min-width: 0;
 }
 
 .brand-logo {
@@ -87,6 +107,7 @@
     color: var(--text-white);
     font-size: 16px;
     box-shadow: var(--shadow-blue);
+    flex-shrink: 0;
 }
 
 .brand-title {
@@ -97,6 +118,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    white-space: nowrap;
 }
 
 .version-badge {
@@ -108,18 +130,23 @@
     background: var(--accent-blue-soft);
     color: #60a5fa;
     border: 1px solid var(--accent-blue-border);
-    font-weight: 500;
+    font-weight: 600;
+    flex-shrink: 0;
 }
 
 .brand-subtitle {
     font-size: 12px;
     color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .header-controls {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+    flex-shrink: 0;
 }
 
 .node-status-pill {
@@ -128,10 +155,14 @@
     gap: 8px;
     padding: 6px 12px;
     border-radius: var(--radius-md);
-    background: var(--bg-input);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     font-size: 12px;
-    color: #d4d4d4;
+    color: var(--text-primary);
+    max-width: 280px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .status-dot {
@@ -139,24 +170,28 @@
     height: 8px;
     border-radius: var(--radius-full);
     background: var(--accent-emerald);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
     animation: pulseOpacity 2s infinite ease-in-out;
+    flex-shrink: 0;
 }
 
 .status-dot.offline {
     background: var(--accent-amber);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
 }
 
 .icon-btn {
     width: 36px;
     height: 36px;
     border-radius: var(--radius-md);
-    background: var(--bg-input);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--text-secondary);
     transition: all 0.2s ease;
+    flex-shrink: 0;
 }
 
 .icon-btn:hover {
@@ -169,14 +204,16 @@
     width: 36px;
     height: 36px;
     border-radius: var(--radius-full);
-    background: linear-gradient(135deg, #9333ea, #2563eb);
+    background: linear-gradient(135deg, #7c3aed, #2563eb);
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--text-white);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 /* ==========================================================================
@@ -185,9 +222,10 @@
 .app-footer {
     width: 100%;
     border-top: 1px solid var(--border-subtle);
-    padding: 22px 0;
+    padding: 20px 0;
     font-size: 12px;
     color: var(--text-muted);
+    background: rgba(14, 16, 21, 0.5);
 }
 
 .footer-inner {
@@ -195,22 +233,28 @@
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 16px;
+    gap: 12px;
 }
 
 .footer-links {
     display: flex;
     align-items: center;
-    gap: 18px;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.footer-links span {
+    color: var(--text-secondary);
+    transition: color 0.2s ease;
 }
 
 .footer-links span:hover {
-    color: var(--text-primary);
+    color: var(--text-white);
     cursor: pointer;
 }
 
 /* ==========================================================================
-   SHARED KEYFRAMES & BREAKPOINTS
+   SHARED KEYFRAMES & RESPONSIVE BREAKPOINTS
    ========================================================================== */
 @keyframes pulseOpacity {
     0%, 100% { opacity: 1; }
@@ -240,24 +284,57 @@
     animation: spinLinear 0.9s linear infinite;
 }
 
+/* Tablet & Mobile Stack: Strictly constrained with minmax(0, 1fr) so children NEVER overflow */
 @media (max-width: 1080px) {
     .main-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 20px;
+        padding: 20px 20px;
     }
     .left-col, .right-col {
-        grid-column: span 1 / span 1;
+        grid-column: 1 / -1;
     }
 }
 
 @media (max-width: 768px) {
     .node-status-pill {
+        padding: 5px 9px;
+        font-size: 11px;
+        max-width: 150px;
+    }
+    /* Hide the verbose node name on narrow screens, keep status dot + Live Ready */
+    #headerNodeName {
         display: none;
     }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 540px) {
+    :root {
+        --header-height: 58px;
+    }
     .container, .main-grid {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+    .main-grid {
+        padding-top: 14px;
+        padding-bottom: 20px;
+        gap: 14px;
+    }
+    .node-status-pill {
+        display: none;
+    }
+    .brand-subtitle {
+        font-size: 11px;
+    }
+    .footer-inner {
+        flex-direction: column;
+        justify-content: center;
+        text-align: center;
+        gap: 8px;
+    }
+    .footer-links {
+        justify-content: center;
+        gap: 14px;
     }
 }

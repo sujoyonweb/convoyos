@@ -11,6 +11,17 @@
         registerServiceWorker();
     });
 
+    function computeCleanInitials(nameStr) {
+        const cleaned = String(nameStr || 'Node')
+            .replace(/[^a-zA-Z0-9\s]/g, ' ')
+            .trim();
+        const words = cleaned.split(/\s+/).filter(Boolean);
+        if (words.length >= 2) {
+            return (words[0][0] + words[1][0]).toUpperCase();
+        }
+        return (words[0] || 'CV').slice(0, 2).toUpperCase();
+    }
+
     function applySettingsToHeader() {
         const settings = window.convoyStorage.getSettings();
         const nameEl = document.getElementById('headerNodeName');
@@ -21,11 +32,7 @@
 
         if (nameEl) nameEl.textContent = settings.deviceName;
         if (badgeEl) {
-            const words = settings.deviceName.trim().split(/\s+/);
-            const initials = words.length > 1
-                ? (words[0][0] + words[1][0]).toUpperCase()
-                : settings.deviceName.slice(0, 2).toUpperCase();
-            badgeEl.textContent = initials;
+            badgeEl.textContent = computeCleanInitials(settings.deviceName);
         }
 
         if (inputName) inputName.value = settings.deviceName;
@@ -120,7 +127,7 @@
         toast.className = 'toast-item';
         toast.style.borderColor = borderColor;
         toast.innerHTML = `
-            <svg class="icon" style="color:${iconColor}; font-size:14px"><use href="${iconHref}"></use></svg>
+            <svg class="icon" style="color:${iconColor}; font-size:14px; flex-shrink:0"><use href="${iconHref}"></use></svg>
             <span>${message}</span>
         `;
 

@@ -1,9 +1,8 @@
 /**
- * convoyOS v0.0.1 - Phase 3 Native HTTP/TCP Turbo Bridge & Zero-Install Hotspot Client
- * - Automatically detects if running inside the Native App (.exe / .apk) OR connected to a Native Hotspot Host (:53317)
+ * convoyOS v0.0.1 - Phase 3 Native HTTP/TCP Turbo Bridge, Hotspot Client & Android WebView Saver
+ * - Zero-config LAN/Hotspot discovery via UDP Multicast (:53317)
  * - Upgrades same-LAN transfers to Kernel HTTP/TCP Streaming (60 - 250+ MB/s)
- * - Injects 0%-Internet UDP Multicast peers into the existing Nearby Devices list
- * - Falls back 100% seamlessly to Phase 2's 4x WebRTC Direct engine when browser-to-browser
+ * - Intercepts WebView blob: downloads inside .apk/.exe so WebRTC & Global Link files save directly to native Downloads
  */
 (function () {
     const TURBO_PORT = 53317;
@@ -12,15 +11,14 @@
     let isNativeShell = false;
     let isConnectedToHotspotHost = window.location.port === String(TURBO_PORT);
     let localLanIp = null;
-    let turboPeers = new Map(); // peerId -> { id, name, ip, port, os, type }
-    let activeXhr = null;
+    let turboPeers = new Map();
 
     document.addEventListener('DOMContentLoaded', () => {
         initTurboBridge();
     });
 
     async function initTurboBridge() {
-        // 1. Check if running inside the compiled convoyOS Native App (.exe / .apk)
+        // 1. Detect if running inside the compiled convoyOS Native App (.apk / .exe)
         try {
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), 450);
@@ -32,7 +30,7 @@
                 isNativeShell = true;
                 localLanIp = info.lanIp;
 
-                // Automatically set LAN IP override so the Pair Tab QR code becomes a Zero-Install Hotspot Host QR!
+                // Automatically configure Pair Tab QR to act as a Zero-Install Wi-Fi / Hotspot Host
                 if (localLanIp && localLanIp !== '127.0.0.1') {
                     window.convoyStorage.saveSettings({
                         lanIpOverride: `${localLanIp}:${TURBO_PORT}`
@@ -41,22 +39,58 @@
                 }
 
                 window.convoyApp.setNetworkBadge(true, `Turbo LAN (${localLanIp})`);
+                installNativeBlobDownloadInterceptor();
                 startNativeMulticastRadarLoop();
                 checkWindowsExplorerCliFiles();
             }
         } catch (_) {}
 
-        // 2. Check if this browser was opened by scanning a friend's Zero-Install Hotspot QR (:53317)
+        // 2. Detect if opened in a mobile/desktop browser via a friend's Zero-Install Hotspot QR (:53317)
         if (!isNativeShell && isConnectedToHotspotHost) {
             connectAsZeroInstallGuest();
         }
 
-        // 3. Wrap initiateWebRtcTransfer so peers with a reachable Turbo HTTP endpoint transfer at 100+ MB/s
+        // 3. Hook transfer dispatcher so LAN peers use Kernel HTTP Turbo automatically
         hookTransferDispatcher();
     }
 
     // =========================================================================
-    // 1. 0% INTERNET UDP MULTICAST RADAR & WINDOWS RIGHT-CLICK CLI STAGING
+    // 1. ANDROID / WINDOWS WEBVIEW BLOB DOWNLOAD INTERCEPTOR
+    // =========================================================================
+    function installNativeBlobDownloadInterceptor() {
+        const origClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+            if (isNativeShell && this.download && this.href && this.href.startsWith('blob:')) {
+                const fileName = this.download || 'download.bin';
+                const blobUrl = this.href;
+                saveBlobToNativeDownloads(blobUrl, fileName);
+                return;
+            }
+            return origClick.apply(this, arguments);
+        };
+    }
+
+    async function saveBlobToNativeDownloads(blobUrl, fileName) {
+        try {
+            const res = await fetch(blobUrl);
+            const blob = await res.blob();
+            const saveRes = await fetch(
+                `${LOCAL_API}/api/save-local?name=${encodeURIComponent(fileName)}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/octet-stream' },
+                    body: blob
+                }
+            );
+            if (saveRes.ok) {
+                const info = await saveRes.json();
+                window.convoyApp.showToast(`Saved "${info.savedName || fileName}" to Downloads!`, 'success');
+            }
+        } catch (_) {}
+    }
+
+    // =========================================================================
+    // 2. 0% INTERNET UDP MULTICAST RADAR & WINDOWS RIGHT-CLICK CLI STAGING
     // =========================================================================
     function startNativeMulticastRadarLoop() {
         const pollLan = async () => {
@@ -68,7 +102,6 @@
                 if (!res.ok) return;
                 const data = await res.json();
 
-                // Register discovered UDP multicast peers in the existing Nearby list
                 if (Array.isArray(data.peers)) {
                     data.peers.forEach((p) => {
                         if (!p.id || p.id === s.nodeId) return;
@@ -84,11 +117,10 @@
                     });
                 }
 
-                // Check if another device uploaded a file to our local Turbo HTTP server
                 if (Array.isArray(data.incomingFiles) && data.incomingFiles.length > 0) {
                     data.incomingFiles.forEach((item) => {
                         window.convoyApp.showToast(
-                            `Saved "${item.fileName}" (${window.convoyDragDrop.formatBytes(item.fileSize)}) to Downloads at Turbo Speed!`,
+                            `Saved "${item.fileName}" (${window.convoyDragDrop.formatBytes(item.fileSize)}) to Downloads!`,
                             'success'
                         );
                     });
@@ -123,7 +155,7 @@
     }
 
     // =========================================================================
-    // 2. ZERO-INSTALL WI-FI / HOTSPOT GUEST MODE (Browser -> Host App)
+    // 3. ZERO-INSTALL WI-FI / HOTSPOT GUEST MODE
     // =========================================================================
     async function connectAsZeroInstallGuest() {
         try {
@@ -154,7 +186,7 @@
     }
 
     // =========================================================================
-    // 3. KERNEL HTTP/TCP TURBO STREAMER (60 - 250+ MB/S) WITH WEBRTC FALLBACK
+    // 4. KERNEL HTTP/TCP TURBO STREAMER (60 - 250+ MB/S) WITH WEBRTC FALLBACK
     // =========================================================================
     function hookTransferDispatcher() {
         if (!window.convoyTransfer || !window.convoyTransfer.initiateWebRtcTransfer) return;
@@ -163,7 +195,9 @@
 
         window.convoyTransfer.initiateWebRtcTransfer = async function (peer, resumeOffset = 0) {
             const knownTurbo = turboPeers.get(peer?.id);
-            const endpoint = peer?.turboEndpoint || (knownTurbo ? (`${knownTurbo.turboEndpoint || `http://${knownTurbo.ip}:${knownTurbo.port || TURBO_PORT}`}`) : null);
+            const endpoint =
+                peer?.turboEndpoint ||
+                (knownTurbo ? (knownTurbo.turboEndpoint || `http://${knownTurbo.ip}:${knownTurbo.port || TURBO_PORT}`) : null);
 
             if (endpoint && resumeOffset === 0) {
                 const reachable = await probeTurboEndpoint(endpoint);
@@ -176,7 +210,6 @@
                 }
             }
 
-            // Fallback seamlessly to Phase 2's 4-Channel WebRTC Direct engine
             return originalWebRtcTransfer.call(this, peer, resumeOffset);
         };
     }
@@ -268,7 +301,6 @@
     function streamSingleFileViaHttp(endpoint, file, onProgress) {
         return new Promise((resolve) => {
             const xhr = new XMLHttpRequest();
-            activeXhr = xhr;
             const senderName = window.convoyStorage.getSettings().deviceName;
             const url = `${endpoint}/api/upload?name=${encodeURIComponent(file.name)}&size=${file.size}&sender=${encodeURIComponent(senderName)}`;
 
@@ -281,20 +313,9 @@
                 }
             };
 
-            xhr.onload = () => {
-                activeXhr = null;
-                resolve(xhr.status >= 200 && xhr.status < 300);
-            };
-
-            xhr.onerror = () => {
-                activeXhr = null;
-                resolve(false);
-            };
-
-            xhr.onabort = () => {
-                activeXhr = null;
-                resolve(false);
-            };
+            xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300);
+            xhr.onerror = () => resolve(false);
+            xhr.onabort = () => resolve(false);
 
             xhr.send(file);
         });
