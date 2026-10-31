@@ -67,17 +67,17 @@ impl AppState {
         .to_string()
     }
 
-    fn poll_lan_peers_json(&self, params: &HashMap<String, String>) -> String {
-        if let Some(id) = params.get("id") {
+    fn poll_lan_peers_json(&self, query_map: &HashMap<String, String>) -> String {
+        if let Some(id) = query_map.get("id") {
             *self.node_id.lock().unwrap() = id.clone();
         }
-        if let Some(name) = params.get("name") {
+        if let Some(name) = query_map.get("name") {
             *self.device_name.lock().unwrap() = name.clone();
         }
-        if let Some(os) = params.get("os") {
+        if let Some(os) = query_map.get("os") {
             *self.os_name.lock().unwrap() = os.clone();
         }
-        if let Some(dtype) = params.get("type") {
+        if let Some(dtype) = query_map.get("type") {
             *self.device_type.lock().unwrap() = dtype.clone();
         }
 
@@ -227,7 +227,7 @@ fn url_decode(input: &str) -> String {
     String::from_utf8_lossy(&bytes).to_string()
 }
 
-fn parse_query_params(query: &str) -> HashMap<String, String> {
+fn parse_query_map(query: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for pair in query.split('&') {
         if let Some((k, v)) = pair.split_once('=') {
@@ -365,7 +365,7 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
     let method = parts[0].to_string();
     let full_path = parts[1].to_string();
     let (path, query_str) = full_path.split_once('?').unwrap_or((&full_path, ""));
-    let params = parse_query_params(query_str);
+    let query_map = parse_query_map(query_str);
 
     if method == "OPTIONS" {
         let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: *\r\nContent-Length: 0\r\n\r\n";
@@ -383,7 +383,7 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
     }
 
     if path == "/api/lan-peers" {
-        let body = state.poll_lan_peers_json(¶ms);
+        let body = state.poll_lan_peers_json(&query_map);
         return send_json_response(&mut stream, &body).await;
     }
 
@@ -393,7 +393,7 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
     }
 
     if path == "/api/cli-file" {
-        if let Some(target_id) = params.get("id") {
+        if let Some(target_id) = query_map.get("id") {
             if let Some(file_path) = state.take_cli_file_path(target_id) {
                 return serve_disk_file(&mut stream, &file_path, "application/octet-stream").await;
             }
@@ -401,4 +401,166 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
         return send_404(&mut stream).await;
     }
 
-    if method == "POST"
+    if method == "POST" && (path == "/api/upload" || path == "/api/save-local") {
+        let raw_name = query_map
+            .get("name")
+            .cloned()
+            .unwrap_or_else(|| "received_file.bin".to_string());
+        let expected_size = query_map
+            .get("size")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or_else(|| parse_content_length(&header_str));
+        let sender = query_map
+            .get("sender")
+            .cloned()
+            .unwrap_or_else(|| "Peer".to_string());
+
+        let (dest_path, final_name) = get_unique_file_path(&state.downloads_dir, &raw_name);
+        let mut out_file = File::create(&dest_path).await?;
+
+        let already_read_body = &header_buf[header_end_pos..read_total];
+        let mut written: u64 = 0;
+        if !already_read_body.is_empty() {
+            out_file.write_all(already_read_body).await?;
+            written += already_read_body.len() as u64;
+        }
+
+        let mut chunk_buf = vec![0u8; 1048576];
+        while written < expected_size {
+            let to_read = std::cmp::min(chunk_buf.len() as u64, expected_size - written) as usize;
+            let n = stream.read(&mut chunk_buf[..to_read]).await?;
+            if n == 0 {
+                break;
+            }
+            out_file.write_all(&chunk_buf[..n]).await?;
+            written += n as u64;
+        }
+        out_file.flush().await?;
+
+        if path == "/api/upload" {
+            state.record_incoming_file(final_name.clone(), written, sender);
+        }
+
+        let resp_json = serde_json::json!({
+            "saved": true,
+            "savedName": final_name
+        })
+        .to_string();
+        return send_json_response(&mut stream, &resp_json).await;
+    }
+
+    let rel_path = if path == "/" || path.is_empty() {
+        "index.html"
+    } else {
+        path.trim_start_matches('/')
+    };
+
+    if rel_path.contains("..") {
+        return send_404(&mut stream).await;
+    }
+
+    let disk_path = state.web_root.join(rel_path);
+    if disk_path.is_file() {
+        let mime = guess_mime_type(&disk_path);
+        return serve_disk_file(&mut stream, &disk_path, mime).await;
+    }
+
+    send_404(&mut stream).await
+}
+
+fn guess_mime_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" => "application/javascript; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn send_json_response(stream: &mut TcpStream, body: &str) -> std::io::Result<()> {
+    let bytes = body.as_bytes();
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nContent-Length: {}\r\n\r\n",
+        bytes.len()
+    );
+    stream.write_all(header.as_bytes()).await?;
+    stream.write_all(bytes).await?;
+    Ok(())
+}
+
+async fn serve_disk_file(stream: &mut TcpStream, path: &Path, mime: &str) -> std::io::Result<()> {
+    let mut file = match File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return send_404(stream).await,
+    };
+    let meta = file.metadata().await?;
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n",
+        mime,
+        meta.len()
+    );
+    stream.write_all(header.as_bytes()).await?;
+    tokio::io::copy(&mut file, stream).await?;
+    Ok(())
+}
+
+async fn send_404(stream: &mut TcpStream) -> std::io::Result<()> {
+    let resp = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 9\r\n\r\nNot Found";
+    stream.write_all(resp.as_bytes()).await
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let mut cli_items = Vec::new();
+    for (idx, arg) in env::args().skip(1).enumerate() {
+        let p = PathBuf::from(&arg);
+        if p.is_file() {
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file")
+                .to_string();
+            cli_items.push(CliStagedItem {
+                id: format!("CLI-{}", idx),
+                name,
+                path: p,
+            });
+        }
+    }
+
+    let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let web_root = if current_dir.join("index.html").exists() {
+        current_dir
+    } else {
+        current_dir.parent().unwrap_or(Path::new(".")).to_path_buf()
+    };
+
+    let state = Arc::new(AppState {
+        node_id: Mutex::new("NODE-NATIVE".to_string()),
+        device_name: Mutex::new("convoyOS Turbo Node".to_string()),
+        os_name: Mutex::new(env::consts::OS.to_uppercase()),
+        device_type: Mutex::new("desktop".to_string()),
+        lan_ip: detect_lan_ipv4(),
+        web_root,
+        downloads_dir: resolve_downloads_dir(),
+        peers: Mutex::new(HashMap::new()),
+        incoming_notices: Mutex::new(Vec::new()),
+        cli_files: Mutex::new(cli_items),
+    });
+
+    spawn_udp_multicast_radar(state.clone());
+
+    let http_state = state.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(run_turbo_http_server(http_state));
+    });
+
+    tauri::Builder::default()
+        .run(tauri::generate_context!())
+        .expect("error while running convoyOS native application");
+}
