@@ -47,7 +47,6 @@ struct AppState {
     os_name: Mutex<String>,
     device_type: Mutex<String>,
     lan_ip: String,
-    web_root: PathBuf,
     downloads_dir: PathBuf,
     peers: Mutex<HashMap<String, LanPeer>>,
     incoming_notices: Mutex<Vec<IncomingFileNotice>>,
@@ -165,6 +164,28 @@ fn parse_query_params(query: &str) -> HashMap<String, String> {
         }
     }
     map
+}
+
+// Embedded Web Assets so Zero-Install Mobile Hotspot Hosting works inside Android .apk & Windows .exe
+fn get_embedded_web_asset(rel_path: &str) -> Option<(&'static [u8], &'static str)> {
+    match rel_path {
+        "index.html" => Some((include_bytes!("../../index.html"), "text/html; charset=utf-8")),
+        "manifest.json" => Some((include_bytes!("../../manifest.json"), "application/json; charset=utf-8")),
+        "sw.js" => Some((include_bytes!("../../sw.js"), "application/javascript; charset=utf-8")),
+        "css/variables.css" => Some((include_bytes!("../../css/variables.css"), "text/css; charset=utf-8")),
+        "css/reset.css" => Some((include_bytes!("../../css/reset.css"), "text/css; charset=utf-8")),
+        "css/main.css" => Some((include_bytes!("../../css/main.css"), "text/css; charset=utf-8")),
+        "css/components.css" => Some((include_bytes!("../../css/components.css"), "text/css; charset=utf-8")),
+        "js/qr.js" => Some((include_bytes!("../../js/qr.js"), "application/javascript; charset=utf-8")),
+        "js/storage.js" => Some((include_bytes!("../../js/storage.js"), "application/javascript; charset=utf-8")),
+        "js/dragdrop.js" => Some((include_bytes!("../../js/dragdrop.js"), "application/javascript; charset=utf-8")),
+        "js/discovery.js" => Some((include_bytes!("../../js/discovery.js"), "application/javascript; charset=utf-8")),
+        "js/transfer.js" => Some((include_bytes!("../../js/transfer.js"), "application/javascript; charset=utf-8")),
+        "js/app.js" => Some((include_bytes!("../../js/app.js"), "application/javascript; charset=utf-8")),
+        "js/native-turbo.js" => Some((include_bytes!("../../js/native-turbo.js"), "application/javascript; charset=utf-8")),
+        "assets/favicon.svg" => Some((include_bytes!("../../assets/favicon.svg"), "image/svg+xml")),
+        _ => None,
+    }
 }
 
 fn spawn_udp_multicast_radar(state: Arc<AppState>) {
@@ -371,6 +392,7 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
         return send_404(&mut stream).await;
     }
 
+    // Route: Save WebRTC / Global Link Blob directly to Native Downloads (/api/save-local) or Turbo Upload (/api/upload)
     if method == "POST" && (path == "/api/upload" || path == "/api/save-local") {
         let raw_name = params.get("name").cloned().unwrap_or_else(|| "received_file.bin".to_string());
         let expected_size = params
@@ -416,36 +438,25 @@ async fn handle_http_connection(mut stream: TcpStream, state: Arc<AppState>) -> 
         return send_json_response(&mut stream, &resp_json.to_string()).await;
     }
 
+    // Serve Embedded Web UI Assets for Zero-Install Wi-Fi / Hotspot Guests
     let rel_path = if path == "/" || path.is_empty() {
         "index.html"
     } else {
         path.trim_start_matches('/')
     };
 
-    if rel_path.contains("..") {
-        return send_404(&mut stream).await;
-    }
-
-    let disk_path = state.web_root.join(rel_path);
-    if disk_path.is_file() {
-        let mime = guess_mime_type(&disk_path);
-        return serve_disk_file(&mut stream, &disk_path, mime).await;
+    if let Some((bytes, mime)) = get_embedded_web_asset(rel_path) {
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n",
+            mime,
+            bytes.len()
+        );
+        stream.write_all(header.as_bytes()).await?;
+        stream.write_all(bytes).await?;
+        return Ok(());
     }
 
     send_404(&mut stream).await
-}
-
-fn guess_mime_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "html" => "text/html; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "js" => "application/javascript; charset=utf-8",
-        "json" => "application/json; charset=utf-8",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "woff2" => "font/woff2",
-        _ => "application/octet-stream",
-    }
 }
 
 async fn send_json_response(stream: &mut TcpStream, body: &str) -> std::io::Result<()> {
@@ -499,20 +510,12 @@ pub fn run() {
         }
     }
 
-    let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let web_root = if current_dir.join("index.html").exists() {
-        current_dir
-    } else {
-        current_dir.parent().unwrap_or(Path::new(".")).to_path_buf()
-    };
-
     let state = Arc::new(AppState {
         node_id: Mutex::new("NODE-NATIVE".to_string()),
         device_name: Mutex::new("convoyOS Turbo Node".to_string()),
         os_name: Mutex::new(env::consts::OS.to_uppercase()),
         device_type: Mutex::new("desktop".to_string()),
         lan_ip: detect_lan_ipv4(),
-        web_root,
         downloads_dir: resolve_downloads_dir(),
         peers: Mutex::new(HashMap::new()),
         incoming_notices: Mutex::new(Vec::new()),
